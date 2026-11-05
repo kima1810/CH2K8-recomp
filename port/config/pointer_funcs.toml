@@ -83,3 +83,10 @@
 # all 21 wrappers in [8471B068,8471B118) finds only these two missing entries.
 0x8471B0A8 = { size = 8 }  # zero r3 -> 84718B80; runtime-observed
 0x8471B0B0 = { size = 8 }  # zero r3 -> 84718B90; verified sibling
+
+# [CONFIRMED] Log 003 and log 005 fatal when backing out of the settings menu.
+# Runtime memory read: lis/addi 8565CC80, lwz r3,0x20C(r11), blr; 84CA89A8 is
+# the next entry. Only reached through the pointer list at 8555F4C8, whose other
+# six slots are registered. sub_84CA88F8 stores the same field offset.
+# See docs/findings/2026-11-04-settings-menu-getter.md.
+0x84CA8998 = { size = 16 }

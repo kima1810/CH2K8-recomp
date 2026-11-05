@@ -4,13 +4,14 @@
 
 - [2026-11-03 Native GPU progress waits](2026-11-03-native-gpu-progress-wait.md): bounded native address waits retain original completion and cancellation checks; same-build demo runs use about 20% less process CPU. Scene-dependent FPS limits remain.
 
-- [2026-11-03 Native geometry kernels](2026-11-03-native-geometry-kernels.md): batch normalization, hoist span checks and share physical-address adaptation across three dominant kernels. Live interleaving reduces combined geometry work about 10%; identical-input full jobs improve 14%, 18% and 7%, with bit-exact state and RAM. Repeated normal-play windows produce 40–45% more submissions; scenes remain unmatched and stable 60 FPS is unproven.
+- [2026-11-03 Native geometry kernels](2026-11-03-native-geometry-kernels.md): batch normalization, hoist span checks and share physical-address adaptation across three dominant kernels. Live interleaving reduces combined geometry work about 10%; identical-input full jobs improve 14%, 18% and 7%, with bit-exact state and RAM. Repeated normal-play windows produce 40ï¿½45% more submissions; scenes remain unmatched and stable 60 FPS is unproven.
 
-- [2026-11-03 Packed-vector lane order](2026-11-03-packed-vector-lane-order.md): new optimized-build profiling confirms three geometry routines remain hot; remove redundant pack/unpack lane reversals with bit-exact outputs. Local helpers improve 7–9%; whole-game FPS benefit remains unestablished.
+- [2026-11-03 Packed-vector lane order](2026-11-03-packed-vector-lane-order.md): new optimized-build profiling confirms three geometry routines remain hot; remove redundant pack/unpack lane reversals with bit-exact outputs. Local helpers improve 7ï¿½9%; whole-game FPS benefit remains unestablished.
 
 - [2026-11-03 Native presentation and Release build](2026-11-03-native-presentation-and-release-build.md): detect false-success VBlank waits instead of flooding host presentation; restore explicit optimized Release flags. Visible native-target samples improve from 622 ms to 26.5 ms median guest submissions with unchanged visual settings; older-hardware and consistent-60-FPS validation remain open.
 
 - [2026-11-03 Geometry and shader constants](2026-11-03-native-geometry-and-constants.md): exact draw-state specialization removes vertex/index compatibility branches; SIMD/bitset bookkeeping reduces local constant-update costs. Full EDRAM replay remains byte-identical, while controlled GPU time is effectively unchanged.
+- [2026-11-04 Settings menu getter](2026-11-04-settings-menu-getter.md): backing out of changed settings fatals on unregistered `84CA8998`; the four-instruction getter is registered.
 
 - [2026-11-02 Codegen and save review](2026-11-02-codegen-and-save-review.md): existing packed-vector/switch corrections verified; aggregate save enumeration avoids duplicate root visits; unknown buzzer-crash target remains unresolved.
 
