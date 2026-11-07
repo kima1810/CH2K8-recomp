@@ -1,0 +1,9 @@
+address,name,instruction_comments,vector_instruction_comments,stvlx_sites,backward_branches,callers,common_operations
+0x84723778,FUN_84723778,337,233,16,1,0x84725580;0x847262B8,vor128:36;rlwinm:29;vupkd3d128:25;vspltw128:23;vmaddcfp128:21;vpermwi128:16;vpkd3d128:16;stvlx:16;lvlx:14;lwz:10
+0x84723CC0,FUN_84723CC0,362,249,16,1,0x84725580;0x847262B8,vor128:41;rlwinm:31;vupkd3d128:25;vspltw128:24;vmaddcfp128:22;lvlx:17;vmulfp128:17;vpkd3d128:16;stvlx:16;lwz:11
+0x84724930,FUN_84724930,603,414,16,2,0x84725580;0x847262B8,vor128:50;rlwinm:43;vmaddcfp128:41;vmsum3fp128:33;vor:32;vmaddfp:31;vupkd3d128:28;vpermwi128:25;lvlx:22;vmulfp128:20
+0x84725580,FUN_84725580,261,120,0,3,0x847269E0;0x84726920,addi:27;lvx128:19;vupkd3d128:17;vmulfp128:15;li:14;mr:13;bl:10;vpermwi128:10;vsubfp:9;stvx128:8
+0x847262B8,FUN_847262B8,85,12,0,0,0x847269E0;0x84726920,lwz:13;bl:12;li:9;mr:9;stvx128:7;addi:7;lvx128:5;vpermwi128:4;rlwinm:4;vrlimi128:3
+0x84726920,FUN_84726920,48,0,0,4,,lwz:11;bl:6;beq:3;mtmsrd:3;bne:3;b:3;addi:2;li:2;cmplwi:2;stwcx.:2
+0x847269E0,FUN_847269E0,98,0,0,7,,lwz:16;bl:14;li:7;addi:7;mr:6;bne:6;mtmsrd:5;rlwinm:3;cmplwi:3;beq:3
+0x84DCB0C8,FUN_84DCB0C8,357,0,0,3,0x84D33B50;0x84762B20;0x84D33340;0x84DDE400;0x84D2FFE8;0x84DCB660;0x84DCB878;0x84D32778,addi:48;lwz:46;mr:40;bl:30;li:24;stw:21;beq:20;cmplwi:13;bne:11;rlwinm:11

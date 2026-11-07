@@ -17,3 +17,8 @@ __pycache__/
 .pytest_cache/
 *.7z
 *.rar
+*.iso
+*.xex
+*.exe
+*.dll
+*.pdb

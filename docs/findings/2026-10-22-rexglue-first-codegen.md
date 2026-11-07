@@ -1,5 +1,10 @@
 # 2026-10-22: First ReXGlue codegen of default.xex
 
+Follow-up: [2026-10-30 native build and control-flow recovery](2026-10-30-native-build-and-control-flow.md)
+reproduces and resolves the 16 fatal sites, identifies two additional owning
+functions in the original grouping, and records recovered full switch tables.
+The historical results below describe the original uncorrected generation.
+
 ## Question
 Can ReXGlue recompile the CH2K8 360 executable as-is, and what does it trip on?
 

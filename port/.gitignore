@@ -4,6 +4,7 @@
 
 # SDK, build output and logs.
 /sdk/
+/sdk-vulkan/
 /out/
 /logs/
 *.log

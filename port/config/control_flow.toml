@@ -1,0 +1,83 @@
+# Retail USA default.xex, SHA-256 71e8983d1cc009e485696aad19b5fa4b4661761870e2c8972717b932c1e4be36.
+# [CONFIRMED] Bounds and inline table targets inspected with Ghidra/Xenon360.
+# See docs/findings/2026-10-30-native-build-and-control-flow.md for evidence.
+# End addresses are exclusive. Keep all blocks in their owning function so
+# codegen resolves branches to labels that it already emits.
+
+[functions]
+0x84B8A368 = { end = 0x84B8A608 }
+0x84C208D8 = { end = 0x84C20A4C }
+0x84C20A50 = { end = 0x84C20AE8 }
+0x84C20AE8 = { end = 0x84C20B90 }
+0x84D40778 = { end = 0x84D40850 }
+0x84DAB6E8 = { end = 0x84DAB720 }
+# [CONFIRMED] Profiling hit a truncated second dispatch in this function.
+# Its final shared epilogue is 84C1F028..84C1F038; the next prologue starts F038.
+0x84C1EAA8 = { end = 0x84C1F038 }
+
+# [CONFIRMED] Original eleven words at 84C1EBB0..84C1EBDC. Unlike the
+# audited self-contained inline idiom, code for the earlier dispatch follows
+# this table before its earliest target. See the slowdown finding.
+[[switch_tables]]
+address = 0x84C1EBAC
+register = 11
+labels = [0x84C1EC30, 0x84C1ED5C, 0x84C1ED5C, 0x84C1EDCC, 0x84C1EDF4,
+          0x84C1EF9C, 0x84C1EFC0, 0x84C1F028, 0x84C1EFE4, 0x84C1F028, 0x84C1F028]
+
+# The index is r10 before rlwinm scales it into r0. These are four
+# consecutive big-endian pointers immediately following each bctr.
+[[switch_tables]]
+address = 0x84C20904
+register = 10
+labels = [0x84C20A48, 0x84C20A48, 0x84C20918, 0x84C2092C]
+
+[[switch_tables]]
+address = 0x84C20964
+register = 10
+labels = [0x84C20978, 0x84C209AC, 0x84C209E0, 0x84C20A48]
+
+[[switch_tables]]
+address = 0x84C20A7C
+register = 10
+labels = [0x84C20AE4, 0x84C20A90, 0x84C20AE4, 0x84C20AA4]
+
+[[switch_tables]]
+address = 0x84C20B14
+register = 10
+labels = [0x84C20B28, 0x84C20B8C, 0x84C20B3C, 0x84C20B8C]
+
+# Six inline pointers; the unscaled selector is r3, not r0 or CTR.
+[[switch_tables]]
+address = 0x84D407B4
+register = 3
+labels = [0x84D40838, 0x84D407D0, 0x84D407E8, 0x84D407F4, 0x84D407DC, 0x84D40800]
+
+# [CONFIRMED] Native startup reached the default trap when only case 0 was
+# generated. Five consecutive pointers end at the first case (0x84B8A424).
+[[switch_tables]]
+address = 0x84B8A40C
+register = 11
+labels = [0x84B8A46C, 0x84B8A424, 0x84B8A4AC, 0x84B8A4F4, 0x84B8A53C]
+
+# [CONFIRMED] The owning loop reaches r7=8 and r7=9. Equality checks that skip
+# 3 and 7 are not upper bounds. The inline table has ten words, not eight.
+[[switch_tables]]
+address = 0x84D3688C
+register = 7
+labels = [0x84D368B8, 0x84D368B8, 0x84D368C0, 0x84D368C8, 0x84D368B8,
+          0x84D368B8, 0x84D368C0, 0x84D368C8, 0x84D368D0, 0x84D368D0]
+
+# [CONFIRMED] Same equality-skip idiom in the neighboring startup layout loop;
+# r27 still reaches eight and nine. Both use the final li r31,4 case body.
+[[switch_tables]]
+address = 0x84D3AD78
+register = 27
+labels = [0x84D3ADA4, 0x84D3ADA4, 0x84D3ADAC, 0x84D3ADB4, 0x84D3ADA4,
+          0x84D3ADA4, 0x84D3ADAC, 0x84D3ADB4, 0x84D3ADBC, 0x84D3ADBC]
+
+# [CONFIRMED] Native startup next reached the single-case fallback in this
+# four-entry word-copy dispatch. The case bodies intentionally fall through.
+[[switch_tables]]
+address = 0x84D422BC
+register = 11
+labels = [0x84D422E8, 0x84D422E0, 0x84D422D8, 0x84D422D0]

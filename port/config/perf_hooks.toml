@@ -1,0 +1,12 @@
+# [CONFIRMED] The generated guest presentation wrapper calls VdSwap at
+# 84DCB314 and resumes at 84DCB318. These no-argument probes preserve all
+# guest registers and are inactive unless ch2k8_frame_log is explicitly set.
+[[midasm_hook]]
+address = 0x84DCB314
+name = "Ch2k8BeforeSwap"
+registers = []
+
+[[midasm_hook]]
+address = 0x84DCB318
+name = "Ch2k8AfterSwap"
+registers = []

@@ -1,0 +1,18 @@
+# Python-free beta launcher and asset tools
+
+The distributed launcher, ISO import, editable-resource preparation, preflight and package verification no longer invoke or bundle Python. `ch2k8_tools.exe` is a standalone C++23 executable using Windows BCrypt, the vendored MIT nlohmann/json parser and the public-domain miniz inflater. The existing bounded H7A codec is compiled directly into the executable. No CPython DLL, frozen interpreter, interpreter DLL loading, scripts or environment lookup is used in the tester package.
+
+The native tool retains the loose-resource pipeline: ISO identity/extent checks, transactional extraction, paired-resource decomposition, native loader maps, fixed-size component edits, the existing checked growing-roster exception, added uniform banks, DDS sidecars including scene textures, and fixed-duration PCM sidecars. Existing Python-created loose installations can be prepared by the native tool. The previous Python implementations remain developer reference tools for differential regression tests and are excluded from the ZIP.
+
+`tools/verify_beta.ps1` verifies the SHA-256 inventory, x64 PE files and local/system dependency closure with built-in Windows/.NET APIs. It rejects interpreter files in the distributable. The package includes the native asset executable, game/runtime DLLs, redistributable CRT DLLs, controller mappings, launcher scripts and notices. Dependency preparation no longer downloads Python. The launcher resolves relative CLI paths against the PowerShell location, including when it differs from the process working directory.
+
+The native asset tool also has an independent CMake project under `tools/native_assets`; building that executable requires neither the game SDK nor Python. The full recompilation's code-generation/research/test toolchain still uses developer Python as documented in `port/README.md`.
+
+## Validation
+
+- Fourteen differential native tests cover raw/H7A/ZLIB resources, paired components, ordinary and embedded scene DDS edits, PCM sidecars, the growing roster exception, added banks, all four supported XDVDFS partition offsets, input preservation, cancellation, existing destinations and rollback after a staged failure. Their virtual maps and native substitution indexes match the independent reference implementation.
+- The original retail USA ISO imported fully through the native executable: 3,378 archive entries and 13 parts. The resulting provenance manifest, all 54,930 virtual-map rows, and DDS/audio indexes match the earlier Python-produced installation. No original archive chunks or packed blocks are used by that output.
+- A relocated ZIP containing no Python executable, DLL, module or scripts passed package verification using only Windows PowerShell with PATH restricted to Windows directories and unusable PYTHONHOME/PYTHONPATH. The actual launcher ran native preparation on the real imported installation and started the game from Unicode/bracketed paths. The test-owned game survived 45 seconds and produced a correct 1280x720 title-screen capture. Logs confirm mounting the 13-part loose archive and loading 575 controller mappings.
+- The native tool built successfully both as a port target and from its standalone CMake project without Python or the game SDK. The final automated suite passed 120 tests with 21 environment-dependent skips.
+
+This validates the removal of the runtime interpreter dependency and local ISO/boot compatibility. It does not extend hardware coverage beyond the previously recorded AMD system or establish full-game completion, Legacy, or all edited-asset semantics. Those remain in the beta test matrix.

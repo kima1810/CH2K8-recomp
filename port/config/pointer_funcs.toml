@@ -1,6 +1,6 @@
 # Code addresses referenced from data or built with lis/addi (vtables, callbacks)
 # that analysis did not register as functions. Add entries as codegen or runtime finds them.
-# 8 entries.
+# Individually verified additions; see dated findings.
 
 [functions]
 # First codegen (ReXGlue 0.10.0.24, 2026-10-22): "UnresolvedCall ... target not in any function".
@@ -15,3 +15,71 @@
 0x84D56958 = {}  # from b @ 0x8470E468
 0x84E26188 = {}  # from b @ 0x84E26FFC
 0x84E295C0 = {}  # from b @ 0x84E29A14
+
+# [CONFIRMED] First native startup calls this address indirectly. Ghidra
+# verifies the complete body is one blr (4E800020), after the CTR trampoline
+# at 0x84DF1834. Preserve the guest no-op return instead of inventing a hook.
+0x84DF1840 = { size = 4 }
+
+# [CONFIRMED] Later native startup calls this target indirectly. Ghidra shows
+# the entry's index check, failure return, and virtual tail call through CTR;
+# the next independent entry begins at 0x84E203B0.
+0x84E20368 = { end = 0x84E203B0 }
+
+# [CONFIRMED] Gameplay startup log ch2k8_004.log (2026-10-31) reports this
+# indirect target as unregistered. Original word 4BFFDB30 is a tail branch
+# to the already registered 0x84718E20; the next word is zero padding.
+# See docs/findings/2026-10-31-gameplay-startup-callback.md.
+0x8471B2F0 = { size = 4 }
+
+# [CONFIRMED] The next gameplay attempt reaches 0x8471B2E8. Read-only Ghidra
+# inspection of the complete 25-entry, 8-byte-slot family [8471B2B8,8471B380)
+# finds these three remaining registry gaps. E8 and 300 mask r3 to eight bits
+# before their tail branch; 308 is a single branch followed by zero padding.
+# All three destination functions are already registered. Only E8 has been
+# observed at runtime; 300/308 are structurally verified sibling entries.
+0x8471B2E8 = { size = 8 }  # -> 0x84718DD0
+0x8471B300 = { size = 8 }  # -> 0x84718EA0
+0x8471B308 = { size = 4 }  # -> 0x84718EC0
+
+# [CONFIRMED] Arena introduction reaches unregistered 0x848B6FA0 in log 006.
+# Raw pointer references locate the interleaved table at [8206FA10,8206FFD8):
+# 185 records / 86 distinct targets. These are its only two registry gaps.
+# F98 moves r6 to r3 and tail-calls 84B85818. FA0 tests bit 0x4000 from
+# [r4+0x18], moves r6 to r3, and tail-calls 84B85808 or 84B85C28.
+# All destinations exist. FA0 ends before zero padding at 848B6FBC.
+# Only FA0 is runtime-observed; F98 is a verified table-referenced sibling.
+0x848B6F98 = { size = 8 }
+0x848B6FA0 = { end = 0x848B6FBC }
+
+# [CONFIRMED] Log 007 reaches this unregistered scripted callback. Ghidra
+# verifies lis/lwz loading r3 from 8586E310, then b 8497AA48; zero padding
+# starts at 84AB8CB4. All 87 code-pointer candidates in the bounded source
+# data region [8208D000,8208F000) are registered except this entry.
+0x84AB8CA8 = { size = 12 }
+
+# [CONFIRMED] Log 008 reaches this callback. Original five-instruction body
+# loads the object pointer from [r3+0x10], clears bit 0 of [object+0x1C],
+# stores it, then returns. Zero padding begins at 848E3A14.
+0x848E3A00 = { size = 20 }
+
+# [CONFIRMED] Log 009 reaches this one-instruction callback, b 84718AE0.
+# Read-only Ghidra verifies zero padding immediately after it.
+0x8471B108 = { size = 4 }
+
+# [CONFIRMED] Read-only audit of sibling slots [8471B0B8,8471B118)
+# finds seven more missing entries. All branch destinations are registered.
+# These siblings are structurally verified, not yet runtime-observed.
+0x8471B0B8 = { size = 8 }  # mask r3 to byte -> 84718B60
+0x8471B0C0 = { size = 8 }  # mask r3 to byte -> 84718B70
+0x8471B0C8 = { size = 8 }  # mask r3 to byte -> 84718B80
+0x8471B0D0 = { size = 8 }  # mask r3 to byte -> 84718B90
+0x8471B0D8 = { size = 4 }  # -> 84718B10, then padding
+0x8471B0F8 = { size = 8 }  # mask r3 to byte -> 847187A8
+0x8471B100 = { size = 8 }  # mask r3 to byte -> 8471A1B0
+
+# [CONFIRMED] Optimized-only ROV test reaches 8471B0A8 after tip-off.
+# Original bodies are li r3,0 followed by a tail branch. Read-only audit of
+# all 21 wrappers in [8471B068,8471B118) finds only these two missing entries.
+0x8471B0A8 = { size = 8 }  # zero r3 -> 84718B80; runtime-observed
+0x8471B0B0 = { size = 8 }  # zero r3 -> 84718B90; verified sibling

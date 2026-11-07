@@ -1,0 +1,12 @@
+platform,address,name,confidence,evidence
+xbox360,0x84723778,FUN_84723778,CONFIRMED,135/299 fresh guest executable IP samples after pack optimization; Ghidra boundaries and descriptor-counted runtime timings verified; aligned byte-store path reduces observed ns/work another 14.5% versus pack+unpack (2026-11-01 aligned-vector-stores finding)
+xbox360,0x84723CC0,FUN_84723CC0,CONFIRMED,53/299 fresh guest executable IP samples after pack optimization; Ghidra boundaries and descriptor-counted runtime timings verified; aligned byte-store path reduces observed ns/work another 15.1% versus pack+unpack (2026-11-01 aligned-vector-stores finding)
+xbox360,0x84724930,FUN_84724930,CONFIRMED,107/299 fresh guest executable IP samples after pack optimization; Ghidra boundaries and descriptor-counted runtime timings verified; aligned byte-store path reduces observed ns/work another 14.7% versus pack+unpack (2026-11-01 aligned-vector-stores finding)
+xbox360,0x84725580,FUN_84725580,CONFIRMED,Generated direct calls to all three observed hot routines; purpose not yet named
+xbox360,0x847262B8,FUN_847262B8,CONFIRMED,Generated direct calls to all three observed hot routines; purpose not yet named
+xbox360,0x84726920,FUN_84726920,CONFIRMED,Generated direct calls to 0x84725580 and 0x847262B8; purpose not yet named
+xbox360,0x847269E0,FUN_847269E0,CONFIRMED,Generated direct calls to 0x84725580 and 0x847262B8; purpose not yet named
+xbox360,0x84DCB0C8,FUN_84DCB0C8,CONFIRMED,Contains verified VdSwap call at 0x84DCB314; guest cadence probes bracket the call
+xbox360,0x84F5A6BC,VdSwap,CONFIRMED,Original 0x84DCB314 branch target matched to generated VdSwap import; name is not speculative
+xbox360,0x8471B0A8,FUN_8471B0A8,CONFIRMED,Observed missing callback after tip-off; li r3 zero and tail branch to 0x84718B80 verified read-only in Ghidra
+xbox360,0x8471B0B0,FUN_8471B0B0,CONFIRMED,Verified sibling callback; li r3 zero and tail branch to 0x84718B90; not runtime-observed

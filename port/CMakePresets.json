@@ -13,9 +13,19 @@
                 "CMAKE_PREFIX_PATH": "${sourceDir}/sdk"
             },
             "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+        },
+        {
+            "name": "win-amd64-vulkan",
+            "displayName": "Windows AMD64 with Vulkan and D3D12",
+            "inherits": "win-amd64",
+            "cacheVariables": {
+                "CMAKE_PREFIX_PATH": "${sourceDir}/sdk-vulkan",
+                "CH2K8_REQUIRE_VULKAN": "ON"
+            }
         }
     ],
     "buildPresets": [
-        { "name": "win-amd64", "configurePreset": "win-amd64" }
+        { "name": "win-amd64", "configurePreset": "win-amd64" },
+        { "name": "win-amd64-vulkan", "configurePreset": "win-amd64-vulkan" }
     ]
 }
