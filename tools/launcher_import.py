@@ -1,12 +1,44 @@
-"""Transactional ISO-to-loose-assets import for the portable launcher."""
+"""Developer reference implementation for native ISO-import regression tests.
+
+The distributed launcher invokes ch2k8_tools.exe; this module is not shipped.
+"""
 import argparse
 import contextlib
+import hashlib
 import json
 import shutil
 import sys
 import tempfile
 import time
 from pathlib import Path
+
+
+SUPPORTED_XEX_SHA256 = '71e8983d1cc009e485696aad19b5fa4b4661761870e2c8972717b932c1e4be36'
+
+
+def inspect_iso(image, cancel_file=None):
+    from xbox_disc_source import XboxISO
+    from ch2k8_archive import open_archive
+    image = Path(image).resolve(strict=True)
+    source = XboxISO(image)
+    digest = hashlib.sha256()
+    with (source/'default.xex').open('rb') as stream:
+        while chunk := stream.read(8 << 20):
+            if cancel_file and Path(cancel_file).exists():
+                raise InterruptedError('ISO import cancelled')
+            digest.update(chunk)
+    if digest.hexdigest() != SUPPORTED_XEX_SHA256:
+        raise ValueError('Unsupported default.xex: use the original USA Xbox 360 College Hoops 2K8 ISO. Other games/revisions are not compatible with this recompilation.')
+    archive = open_archive(source)
+    for part in archive.parts:
+        member = source/part.name
+        if not member.is_file():
+            raise ValueError(f'Incomplete Xbox ISO: missing archive part {part.name}')
+        if source.members[part.name.casefold()][1] < part.units * 2048:
+            raise ValueError(f'Truncated Xbox ISO archive part {part.name}')
+    return dict(image_bytes=image.stat().st_size, xex_sha256=digest.hexdigest(),
+                archive_parts=len(archive.parts), archive_entries=len(archive.entries),
+                archive_bytes=archive.total, supported=True)
 
 
 def import_iso(image, output, progress_file=None, cancel_file=None):
@@ -30,6 +62,12 @@ def import_iso(image, output, progress_file=None, cancel_file=None):
             temporary.write_text(json.dumps(dict(done=done,total=total,message=label)),encoding='utf-8')
             temporary.replace(path)
             last_update=now
+    progress(message='Checking ISO identity, archive parts and available disk space...')
+    validation = inspect_iso(image, cancel_file)
+    # A lower bound, not a promise that decoded resources fit this estimate.
+    minimum = validation['archive_bytes'] + (1 << 30)
+    if shutil.disk_usage(output.parent).free < minimum:
+        raise OSError(f'Not enough disk space: at least {minimum / (1 << 30):.1f} GiB free is required before import; decoded assets may need more.')
     progress(message='Reading Xbox ISO and preparing loose assets...')
     # Keep incomplete output separate. Only our own temporary directory is ever
     # removed; an existing installation is never overwritten or cleaned up.
@@ -37,6 +75,7 @@ def import_iso(image, output, progress_file=None, cancel_file=None):
     try:
         with contextlib.redirect_stdout(sys.stderr):
             import_disc(image,staging/'game',direct=True,progress=progress)
+        (staging/'game'/'iso-validation.json').write_text(json.dumps(validation, indent=2), encoding='utf-8')
         progress(message='Finalizing loose asset installation...')
         if output.exists():raise ValueError('Installation destination appeared during import; it was left untouched')
         # Windows rename refuses existing destinations, including empty folders.
@@ -51,12 +90,17 @@ def import_iso(image, output, progress_file=None, cancel_file=None):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('image',type=Path)
-    parser.add_argument('output',type=Path)
+    parser.add_argument('output',type=Path,nargs='?')
+    parser.add_argument('--inspect',action='store_true',help='Validate ISO identity and archive extents without extracting')
     parser.add_argument('--progress-file',type=Path)
     parser.add_argument('--cancel-file',type=Path)
     args=parser.parse_args()
     try:
-        result=import_iso(args.image,args.output,args.progress_file,args.cancel_file)
+        if args.inspect:
+            result=inspect_iso(args.image,args.cancel_file)
+        else:
+            if args.output is None: raise ValueError('Choose an installation destination')
+            result=import_iso(args.image,args.output,args.progress_file,args.cancel_file)
     except (Exception,SystemExit) as error:
         print(str(error),file=sys.stderr)
         return 1

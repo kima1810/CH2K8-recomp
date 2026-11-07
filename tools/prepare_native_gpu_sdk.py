@@ -85,13 +85,54 @@ def patch_backend_v5(text, backend):
         'ch2k8::PixelFlags(native_state, native_depth) != (system_constants_.flags & native_flag_mask)')
 
 
-def patch_backend(text,backend):
+def patch_backend_full_write(text,backend):
     text=patch_backend_v5(text,backend)
     if backend!='d3d12' or '// CH2K8 validate full writes v1' in text:return text
     text=replace_once(text,'// CH2K8 validate specialized pixel state v4',
         '// CH2K8 validate specialized pixel state v4\n  // CH2K8 validate full writes v1')
     return replace_once(text,'(ch2k8::PixelFlags(native_state, native_depth) !=',
         '((ch2k8::FullWrite(native_state) && (system_constants_.edram_rt_keep_mask[0][0] ||\n       system_constants_.edram_rt_keep_mask[0][1])) ||\n      ch2k8::PixelFlags(native_state, native_depth) !=')
+
+
+def patch_backend_geometry_v1(text,backend):
+    text=patch_backend_full_write(text,backend)
+    if backend!='d3d12' or '// CH2K8 draw geometry state v1' in text:return text
+    site='          *vertex_shader, primitive_processing_result.host_vertex_shader_type, interpolator_mask);'
+    text=replace_once(text,site,site+'''
+  // CH2K8 draw geometry state v1: share the decisions used for binding/upload.
+  if(vertex_shader_modification.vertex.native_vertex_memory) {
+    vertex_shader_modification.vertex.native_vertex_memory=memexport_used?2:1;
+    vertex_shader_modification.vertex.native_index_endian=
+        uint32_t(primitive_processing_result.host_shader_index_endian)+1;
+  }''')
+    site='  // Update constant buffers, descriptors and root parameters.'
+    return replace_once(text,site,'''  // Validate against the system constants consumed by the original shader.
+  if(vertex_shader_modification.vertex.native_vertex_memory &&
+     ((vertex_shader_modification.vertex.native_vertex_memory==2) !=
+          bool(system_constants_.flags & DxbcShaderTranslator::kSysFlag_SharedMemoryIsUAV) ||
+      vertex_shader_modification.vertex.native_index_endian-1 != uint32_t(system_constants_.vertex_index_endian))) {
+    REXLOG_ERROR("CH2K8 specialized geometry state mismatch");
+    return false;
+  }
+
+'''+site)
+
+
+def patch_backend(text,backend):
+    text=patch_backend_geometry_v1(text,backend)
+    if backend!='d3d12' or '// CH2K8 memexport geometry fallback v1' in text:return text
+    return replace_once(text,'''    vertex_shader_modification.vertex.native_vertex_memory=memexport_used?2:1;
+    vertex_shader_modification.vertex.native_index_endian=
+        uint32_t(primitive_processing_result.host_shader_index_endian)+1;''', '''    // CH2K8 memexport geometry fallback v1: retain the original UAV path.
+    if(memexport_used) {
+      vertex_shader_modification.vertex.native_vertex_memory=0;
+      vertex_shader_modification.vertex.native_vertex_endian=0;
+      vertex_shader_modification.vertex.native_index_endian=0;
+    } else {
+      vertex_shader_modification.vertex.native_vertex_memory=1;
+      vertex_shader_modification.vertex.native_index_endian=
+          uint32_t(primitive_processing_result.host_shader_index_endian)+1;
+    }''')
 
 
 def patch_changed_usage(text):
@@ -201,12 +242,14 @@ def prepare_native_gpu(source):
         current = path.read_text(encoding='utf-8')
         previous = patch_backend_constants(original, 'd3d12') if '/d3d12/' in relative else expected
         preceding = patch_backend_v3(original, 'd3d12') if '/d3d12/' in relative else expected
-        from prepare_native_sync_sdk import patch_sync, patch_sync_v1
+        from prepare_native_sync_sdk import patch_sync, patch_sync_v1, patch_sync_attribution
         with_sync = patch_sync(expected, 'common' if '/d3d12/' not in relative else 'd3d12') if '/vulkan/' not in relative else expected
-        if current == with_sync or ('/vulkan/' not in relative and current == patch_sync_v1(expected, 'common' if '/d3d12/' not in relative else 'd3d12')): expected = current
+        if ('/vulkan/' not in relative and current == patch_sync_attribution(expected,'common' if '/d3d12/' not in relative else 'd3d12')) or current == with_sync or ('/vulkan/' not in relative and current == patch_sync_v1(expected, 'common' if '/d3d12/' not in relative else 'd3d12')): expected = current
         published = patch_sync(patch_backend_v5(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
         if current == published: expected = with_sync
-        if current not in (original, previous, preceding, published, expected):
+        legacy=patch_sync(patch_backend_full_write(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
+        geometry_legacy=patch_sync(patch_backend_geometry_v1(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
+        if current not in (original, previous, preceding, published, legacy, geometry_legacy, expected):
             raise ValueError('Unreviewed local GPU SDK changes: '+relative)
         paths[path] = expected
     # Validate every insertion before writing any backend source.

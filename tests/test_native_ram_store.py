@@ -44,6 +44,9 @@ def test_previous_store_transform_upgrades_without_losing_original_body():
     for address,index in [('84723778',0),('84723CC0',1),('84724930',2)]:
         signature=f'DEFINE_REX_FUNC(sub_{address}) {{'
         if signature not in old: continue
+        start=old.index(f'template<bool Count>\nstatic void sub_{address}_geometry_fast(')
+        end=old.index('\n}\n',start)+4
+        old=old[:start]+old[end:]
         start=old.index(f'static void sub_{address}_ram_fast(')
         end=old.index('\n}\n',start)+4
         old=old[:start]+old[end:]
@@ -73,7 +76,15 @@ def test_guarded_store_fallback_keeps_preceding_native_paths_enabled(tmp_path):
     source.write_text('''
 #include "packed_vector_optimized.h"
 void Ch2k8ConfigureHotFunctions(int,int,int,int,bool,const char*);
+void Ch2k8ConfigureGeometryBatch(int);
 int main() {
+ Ch2k8ConfigureGeometryBatch(1);simde_mm_setcsr(0x1F80);
+ for(unsigned i=0;i<3;++i) if(!Ch2k8SelectGeometryBatch(i)) return 10;
+ simde_mm_setcsr(0x1F00);
+ for(unsigned i=0;i<3;++i) if(Ch2k8SelectGeometryBatch(i)) return 11;
+ simde_mm_setcsr(0x1F80);Ch2k8ConfigureGeometryBatch(0);
+ for(unsigned i=0;i<3;++i) if(Ch2k8SelectGeometryBatch(i)) return 12;
+ if(Ch2k8HotProfilingEnabled())return 13;
  Ch2k8ConfigureHotFunctions(1,1,1,1,false,nullptr);
  if(!Ch2k8SelectFastRamStore(0)||!Ch2k8SelectFastRamStore(1)||Ch2k8SelectFastRamStore(2)) return 1;
  Ch2k8ConfigureHotFunctions(1,1,1,1,true,nullptr);

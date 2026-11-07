@@ -1,3 +1,4 @@
+#include "native_gpu_wait.h"
 // ch2k8 - ReXGlue Recompiled Project
 //
 // Minimal app: boots the recompiled default.xex through the Xenos GPU plugin.
@@ -21,6 +22,16 @@
 #include <memory>
 #include <thread>
 
+REXCVAR_DEFINE_BOOL(ch2k8_native_gpu_wait,true,"CH2K8/Performance",
+                    "Wait for native GPU progress instead of repeatedly polling")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(ch2k8_gpu_wait_stats,false,"CH2K8/Diagnostics",
+                    "Opt-in aggregate native GPU wait timings");
+void Ch2k8LogGpuWait(const Ch2k8GpuWaitStats& stats) {
+  REXLOG_INFO("CH2K8_GPU_WAIT waits={} notifications={} timeouts={} wall_ms={} address={:X} window_ms={} cpu_ms={}",
+      stats.waits,stats.notifications,stats.timeouts,stats.wall_ms,stats.counter_address,
+      stats.window_ms,stats.thread_cpu_ms);
+}
 REXCVAR_DEFINE_STRING(ch2k8_renderer, "d3d12", "CH2K8/Graphics",
                       "Native graphics backend: d3d12 or vulkan")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -37,6 +48,10 @@ void Ch2k8ConfigureHotFunctions(int selected_mode, int selected_unpack,
                                 int selected_store, int selected_ram,
                                 bool selected_guarded_store, const char *path);
 void Ch2k8CloseHotLog();
+void Ch2k8ConfigureGeometryBatch(int);
+REXCVAR_DEFINE_STRING(ch2k8_geometry_batch, "optimized", "CH2K8/Performance",
+                      "Exact normalization batching: baseline, optimized, compare")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
 REXCVAR_DEFINE_STRING(ch2k8_vector_pack, "optimized", "CH2K8/Performance",
                       "Packed-vector path: baseline, optimized, or compare")
     .lifecycle(rex::cvar::Lifecycle::kInitOnly);
@@ -168,6 +183,13 @@ protected:
       REXLOG_ERROR("Invalid ch2k8_vector_unpack: {}", unpack);
       std::exit(EXIT_FAILURE);
     }
+    const auto batch=REXCVAR_GET(ch2k8_geometry_batch);
+    if(batch!="baseline" && batch!="optimized" && batch!="compare") {
+      REXLOG_ERROR("Invalid ch2k8_geometry_batch: {}",batch);std::exit(EXIT_FAILURE);
+    }
+    Ch2k8ConfigureGpuWait(REXCVAR_GET(ch2k8_native_gpu_wait),
+        REXCVAR_GET(ch2k8_gpu_wait_stats)?Ch2k8LogGpuWait:nullptr);
+    Ch2k8ConfigureGeometryBatch(batch=="compare"?2:batch=="optimized"?1:0);
     Ch2k8ConfigureHotFunctions(pack == "compare"     ? 2
                                : pack == "optimized" ? 1
                                                      : 0,
@@ -222,14 +244,18 @@ protected:
           "readback_memexport_fast", "d3d12_bindless",
           "ch2k8_native_constants", "ch2k8_native_packets",
           "ch2k8_packet_compare", "ch2k8_gpu_stats",
+          "ch2k8_present_stats",
+          "ch2k8_native_present_pacing", "ch2k8_native_gpu_wait", "ch2k8_gpu_wait_stats", "ch2k8_geometry_batch",
           "ch2k8_native_pixel_state", "ch2k8_native_depth_state",
           "ch2k8_native_full_write",
+          "ch2k8_native_vertex_fetch", "ch2k8_vertex_fetch_compare",
           "d3d12_submit_on_primary_buffer_end",
           "vulkan_submit_on_primary_buffer_end", "vulkan_dynamic_rendering",
           "occlusion_query_enable", "host_present_from_non_ui_thread",
           "draw_resolution_scale_x", "draw_resolution_scale_y", "dxbc_switch",
           "d3d12_pipeline_creation_threads",
-          "execute_unclipped_draw_vs_on_cpu"}) {
+          "execute_unclipped_draw_vs_on_cpu", "video_mode_refresh_rate",
+          "ch2k8_guest_refresh_rate", "d3d12_adapter", "vsync"}) {
       REXLOG_INFO("CH2K8 rendering configuration: {}={}", name,
                   rex::cvar::GetFlagByName(name));
     }

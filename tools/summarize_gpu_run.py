@@ -41,6 +41,8 @@ def summarize_run(root, start=120, end=180):
     root = Path(root)
     metadata = json.loads((root/'run.json').read_text(encoding='utf-8-sig'))
     result = {'profile': metadata.get('profile'),
+              'visible_window': metadata.get('visible_window'),
+              'cpu_affinity_mask': metadata.get('cpu_affinity_mask'),
               'executable_sha256': metadata.get('executable_sha256'),
               'runtime_binaries_sha256': metadata.get('runtime_binaries_sha256'),
               'matched_scene': False, 'window_seconds': [start, end],
@@ -49,6 +51,11 @@ def summarize_run(root, start=120, end=180):
     frames = root/'guest-frames.csv'
     result['guest_submissions'] = summarize(frames, start, end) if frames.is_file() else None
     process = [r for r in read_csv(root/'process.csv') if start <= float(r['elapsed_s']) < end]
+    masks = sorted({r.get('cpu_affinity_mask', '') for r in process})
+    result['observed_cpu_affinity_masks'] = masks
+    requested = metadata.get('cpu_affinity_mask')
+    result['cpu_affinity_verified'] = (bool(process) and bool(requested) and
+        int(requested, 0) != 0 and all(mask and int(mask, 0) == int(requested, 0) for mask in masks))
     if len(process) >= 2:
         elapsed = float(process[-1]['elapsed_s'])-float(process[0]['elapsed_s'])
         result['mean_process_cpu_cores'] = ((float(process[-1]['cpu_time_s'])-float(process[0]['cpu_time_s']))/elapsed) if elapsed > 0 else None

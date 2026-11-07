@@ -1,4 +1,4 @@
-For beta installation and portable packaging, see [BETA.md](../BETA.md).
+For beta installation and portable packaging, see [BETA.md](../BETA.md). The distributed launcher uses native `ch2k8_tools.exe` for ISO import and loose asset preparation; no Python interpreter is shipped or required. Python below is developer build/research tooling.
 
 # Building the Xbox 360 recompilation
 
@@ -17,6 +17,30 @@ they do not establish an FPS improvement or gameplay stability result. See the
 
 This is an experimental native port. Successful code generation or compilation
 does not establish that menus or gameplay work.
+
+The three dominant CPU geometry routines use proved native kernels that batch
+independent normalization operations and share validated address adaptation.
+Normal play omits per-store diagnostic counters. `--ch2k8_geometry_batch=baseline`
+restores the previous RAM kernels; `compare` interleaves the two paths for opt-in
+hot-function profiling. The [kernel finding](../docs/findings/2026-11-03-native-geometry-kernels.md)
+records complete-job and live measurements, bitwise checks and remaining limits.
+
+The GPU-counter retry loop now uses bounded native progress waits after a short
+spin. Both original counter words are rechecked before sleeping; completion,
+cancellation and timeout decisions remain in the guest code. This reduces CPU
+contention without reducing visual quality. `--no-ch2k8_native_gpu_wait` restores
+polling; `--ch2k8_gpu_wait_stats` enables diagnostic timing. An older GPU DLL
+without the versioned progress exports automatically retains polling. See the
+[GPU wait finding](../docs/findings/2026-11-03-native-gpu-progress-wait.md).
+
+Release builds explicitly optimize both the generated game and host glue, even
+if the toolchain leaves `CMAKE_CXX_FLAGS_RELEASE` empty. They retain strict
+floating-point behavior, signed-integer wrapping and the existing CPU baseline. Native presentation also
+detects immediately returning DXGI VBlank waits and uses monitor-rate timed UI
+ticks instead of unbounded duplicate presents. `--no-ch2k8_native_present_pacing`
+is the diagnostic fallback; normal blocking VBlank waits are unchanged.
+The [presentation/build finding](../docs/findings/2026-11-03-native-presentation-and-release-build.md)
+records visible-run improvements, visual checks, test coverage and remaining limits.
 
 Measured integer SIMD packing is enabled for three observed hot guest routines.
 It preserves the corrected scalar path and can be disabled with
@@ -71,6 +95,16 @@ randomized packet timing. Run `tools/build_vulkan_sdk.ps1` to apply the checked
 SDK patches; the original binary-only SDK does not contain these controls.
 See the [native-state finding](../docs/findings/2026-11-01-native-constant-state.md).
 
+D3D12 geometry shaders also specialize known vertex/index byte order and
+read-only shared-memory binding by default. Mixed vertex byte orders retain
+dynamic attribute swapping; memory-export draws retain the original geometry
+path. `--no-ch2k8_native_vertex_fetch` restores all dynamic geometry handling.
+Both APIs use SIMD changed-constant masks and bitset usage intersections for
+transform/lighting parameter updates. The original lighting and transform math
+is preserved. See the [geometry/constant findings](../docs/findings/2026-11-03-native-geometry-and-constants.md)
+for bit-exact replay checks, 29–49% local bookkeeping reductions and the lack
+of a demonstrated GPU-time/FPS gain in the tested pixel-heavy workload.
+
 The patched D3D12 ROV backend also specializes pixel shaders to exact MSAA,
 depth-format, alpha-test, RT0 format and supported blend state. This removes
 generic Xbox shader branches while preserving the existing rendering path.
@@ -93,6 +127,9 @@ from PowerShell. It stops its own game after 210 seconds and records native
 images, guest submission cadence, CPU samples and optional local AMD telemetry.
 Other profiles include `d3d12-rov`, `d3d12-rtv`, `vulkan-fbo` and explicit
 `-batched` experiments; `-ValidateOnly` emits arguments without launching.
+Use `-Visible` for normal windowed performance measurements; hidden runs are
+marked separately. `-PresentStats` enables opt-in stage timings, summarized by
+`tools/summarize_present_stats.py`. These nested timings are not additive FPS.
 Summarize with `tools/summarize_gpu_run.py RUN_DIRECTORY`. These demos do not
 lock matchup/camera state. See the [GPU backend finding](../docs/findings/2026-11-01-gpu-backend-investigation.md)
 for measured results and native-renderer limits.

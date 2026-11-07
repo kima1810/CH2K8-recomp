@@ -18,9 +18,9 @@ def test_fast_variants_are_scoped_idempotent_and_reject_unreviewed_shapes():
         scalar_pack(f'v{i}', 'v0', i % 2) for i in range(16)) + '\n' + scalar_unpack('v22', 'v23') + '\n}\n'
     transformed, count = optimize_source(body)
     assert count == 16
-    assert transformed.count('Ch2k8PackBiased64(') == 64
-    assert transformed.count('Ch2k8UnpackBiased64(') == 3
-    assert transformed.count('Ch2k8HotScope hot(') == 5
+    assert transformed.count('Ch2k8PackBiased64(') == 80
+    assert transformed.count('Ch2k8UnpackBiased64(') == 4
+    assert transformed.count('Ch2k8HotScope hot(') == 6
     assert optimize_source(transformed) == (transformed, 0)
     assert restore_source(transformed) == body
     unrelated = body.replace('sub_84723778', 'sub_12345678')
@@ -121,6 +121,9 @@ def test_complete_generated_hot_functions_preserve_context_and_guest_writes(tmp_
                 signature = f'static void sub_{address}_ram_fast('
                 start = text.index(signature)
                 fast[address+'_ram'] = text[start:text.index('\n}\n', start)+3]
+                signature = f'static void sub_{address}_geometry_fast('
+                start = text.index(signature)
+                fast[address+'_geometry'] = 'template<bool Count>\n'+text[start:text.index('\n}\n', start)+3]
                 start = text.index(f'DEFINE_REX_FUNC(sub_{address}) {{')
                 body = text[start:text.index('\n}\n', start)+3]
                 bodies[f'sub_{address}'] = body
@@ -145,6 +148,8 @@ bool selected = false;
 bool selected_unpack = false;
 bool selected_store = false;
 bool selected_ram = false;
+bool selected_batch = true;
+bool selected_profile = true;
 bool inject_stack_load = false;
 uint32_t injected_address = 0, injected_value = 0;
 uint64_t last_wide = 0, last_bytes = 0;
@@ -159,6 +164,8 @@ bool Ch2k8SelectFastVectorPack(unsigned) { return selected; }
 bool Ch2k8SelectFastVectorUnpack(unsigned) { return selected_unpack; }
 bool Ch2k8SelectFastVectorStore(unsigned) { return selected_store; }
 bool Ch2k8SelectFastRamStore(unsigned) { return selected_ram; }
+bool Ch2k8SelectGeometryBatch(unsigned) { return selected_batch; }
+bool Ch2k8HotProfilingEnabled() { return selected_profile; }
 Ch2k8HotScope::Ch2k8HotScope(unsigned,uint32_t,uint8_t*,bool,bool,bool,bool,const uint64_t* counts) : ram_counts_(counts) {}
 Ch2k8HotScope::~Ch2k8HotScope() {last_wide=ram_counts_?ram_counts_[0]:0;last_bytes=ram_counts_?ram_counts_[1]:0;}
 '''
@@ -183,9 +190,9 @@ int main() {
   a.fpscr.csr=0x1F80;const auto initial_context=a;b=a;
   std::memcpy(memory,initial.data(),bytes);simde_mm_setcsr(0x1F80);selected=false;
   functions[f](a,memory);std::memcpy(expected.data(),memory,bytes);
-  for(unsigned variant=0;variant<4;++variant) {
+  for(unsigned variant=0;variant<6;++variant) {
    b=initial_context;
-   std::memcpy(memory,initial.data(),bytes);simde_mm_setcsr(0x1F80);selected=true;selected_unpack=variant!=0;selected_store=variant>=2;selected_ram=variant==3;
+   std::memcpy(memory,initial.data(),bytes);simde_mm_setcsr(0x1F80);selected=true;selected_unpack=variant!=0;selected_store=variant>=2;selected_ram=variant>=3;selected_batch=variant!=3;selected_profile=variant!=5;
    functions[f](b,memory);
    if(std::memcmp(&a,&b,sizeof(a)) || std::memcmp(expected.data(),memory,bytes)) {
     printf("Mismatch function=%u trial=%u variant=%u\\n",f,trial,variant);return 2;
@@ -193,7 +200,7 @@ int main() {
   }
   if(f==2 && trial>=12 && trial%4==0) {
    for(unsigned slot : {356u,364u}) for(uint32_t value : {3u,40945u,40960u,65536u,0xFFFFFFFCu,0xFFFFFFFFu}) {
-    inject_stack_load=true;injected_address=0x180000-slot;injected_value=value;
+    selected_profile=true;inject_stack_load=true;injected_address=0x180000-slot;injected_value=value;
     a=initial_context;b=initial_context;
     std::memcpy(memory,initial.data(),bytes);simde_mm_setcsr(0x1F80);selected=false;
     functions[f](a,memory);std::memcpy(expected.data(),memory,bytes);
@@ -207,7 +214,7 @@ int main() {
    }
   }
  }
- VirtualFree(memory,0,MEM_RELEASE);puts("336 complete function comparisons passed");
+ VirtualFree(memory,0,MEM_RELEASE);puts("504 complete function comparisons passed");
  printf("%u guarded reload comparisons passed\\n",guarded_checks);
 }
 '''
@@ -222,5 +229,5 @@ int main() {
     assert compilation.returncode == 0, compilation.stderr
     result = subprocess.run([str(executable)], capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert '336 complete function comparisons passed' in result.stdout
+    assert '504 complete function comparisons passed' in result.stdout
     assert '48 guarded reload comparisons passed' in result.stdout

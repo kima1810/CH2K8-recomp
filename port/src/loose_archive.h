@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include "native_path.h"
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -19,7 +20,7 @@ namespace ch2k8 {
 class LooseArchive {
  public:
   struct Range { uint64_t offset, size; std::string path; };
-  explicit LooseArchive(const std::filesystem::path& root) : root_(std::filesystem::canonical(root)) {
+  explicit LooseArchive(const std::filesystem::path& root) : root_(NativePath(std::filesystem::canonical(NativePath(root)))) {
     std::ifstream input(root_ / "assets.map");
     std::string line;
     if (!std::getline(input,line) || line != "CH2K8_LOOSE_V1") throw std::runtime_error("Invalid assets.map version");
@@ -77,7 +78,7 @@ class LooseArchive {
   std::filesystem::path CheckedPath(const std::string& relative) const {
     const auto supplied=std::filesystem::u8path(relative);
     if (supplied.is_absolute() || supplied.has_root_name()) throw std::runtime_error("Absolute loose asset path");
-    auto full=std::filesystem::canonical(root_/supplied);
+    auto full=NativePath(std::filesystem::canonical(NativePath(root_/supplied)));
     auto rel=full.lexically_relative(root_);
     if (rel.empty() || *rel.begin()=="..") throw std::runtime_error("Loose asset path escapes installation");
     return full;

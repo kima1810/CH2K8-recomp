@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <fstream>
+#include <filesystem>
 #include <rex/ui/presenter.h>
 #include <vector>
 
@@ -30,7 +31,7 @@ bool Ch2k8SaveOutput(rex::ui::Presenter *presenter, const char *path) {
   le(26, 1, 2);
   le(28, 32, 2);
   le(34, bytes);
-  std::ofstream output(path, std::ios::binary);
+  std::ofstream output(std::filesystem::u8path(path), std::ios::binary);
   if (!output)
     return false;
   output.write(reinterpret_cast<const char *>(header.data()), header.size());

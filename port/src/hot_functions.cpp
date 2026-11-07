@@ -9,6 +9,9 @@
 #endif
 
 namespace {
+std::atomic<int> batch_mode{1};
+thread_local bool selected_batch[3]{};
+thread_local uint32_t batch_selection[3]{0x91E10DA5,0x7F4A7C15,0x6E624EB7};
 std::atomic<int> mode{0}; // baseline, optimized, interleaved comparison
 std::atomic<int> unpack_mode{0};
 std::atomic<int> store_mode{0};
@@ -23,7 +26,7 @@ struct Bin {
   uint64_t calls = 0, units = 0, nanoseconds = 0;
   uint64_t wide_stores = 0, byte_stores = 0;
 };
-thread_local Bin bins[3][5];
+thread_local Bin bins[3][6];
 thread_local uint32_t selection[3]{0x91E10DA5, 0x7F4A7C15, 0x6E624EB7};
 thread_local uint32_t unpack_selection[3]{0xA24BAED5, 0x9FB21C65, 0xC13FA9A9};
 thread_local uint32_t store_selection[3]{0xB5297A4D, 0x68E31DA4, 0x1B56C4E9};
@@ -45,16 +48,16 @@ void flush(uint64_t now) {
       uint64_t(std::hash<std::thread::id>{}(std::this_thread::get_id()));
 #endif
   for (unsigned id = 0; id < 3; ++id)
-    for (unsigned variant = 0; variant < 5; ++variant) {
+    for (unsigned variant = 0; variant < 6; ++variant) {
       auto &bin = bins[id][variant];
       if (!bin.calls)
         continue;
-      std::fprintf(output, "%.3f,%llu,0x%08X,%u,%u,%u,%u,%llu,%llu,%llu,%llu,%llu\n",
+      std::fprintf(output, "%.3f,%llu,0x%08X,%u,%u,%u,%u,%llu,%llu,%llu,%llu,%llu,%u\n",
                    double(now - origin) / 1000000.0, (unsigned long long)thread,
                    addresses[id], unsigned(variant != 0),
-                   unsigned(variant >= 2), unsigned(variant >= 3), unsigned(variant == 4),
+                   unsigned(variant >= 2), unsigned(variant >= 3), unsigned(variant >= 4),
                    (unsigned long long)bin.calls, (unsigned long long)bin.units,
-                   (unsigned long long)bin.nanoseconds, (unsigned long long)bin.wide_stores, (unsigned long long)bin.byte_stores);
+                   (unsigned long long)bin.nanoseconds, (unsigned long long)bin.wide_stores, (unsigned long long)bin.byte_stores, unsigned(variant == 5));
       bin = {};
     }
   std::fflush(output);
@@ -81,11 +84,22 @@ void Ch2k8ConfigureHotFunctions(int selected_mode, int selected_unpack,
   if (!output)
     return;
   std::fputs("elapsed_ms,thread,function,optimized,unpack_optimized,store_"
-             "optimized,ram_optimized,calls,work_units,wall_ns,wide_stores,byte_stores\n",
+             "optimized,ram_optimized,calls,work_units,wall_ns,wide_stores,byte_stores,normalization_batch\n",
              output);
   std::fflush(output);
   origin = now_ns();
   profiling.store(true, std::memory_order_release);
+}
+bool Ch2k8HotProfilingEnabled() {return profiling.load(std::memory_order_acquire);}
+void Ch2k8ConfigureGeometryBatch(int selected) {batch_mode.store(selected,std::memory_order_release);}
+bool Ch2k8SelectGeometryBatch(unsigned index) {
+  const auto mode=batch_mode.load(std::memory_order_acquire);
+  bool enabled=mode==1;
+  if(mode==2) {auto& state=batch_selection[index];state^=state<<13;state^=state>>17;state^=state<<5;enabled=bool(state&1);}
+  // Reordering independent FP operations retains sticky status flags. Preserve
+  // the original instruction order when the host has any unmasked FP traps.
+  enabled=enabled && (simde_mm_getcsr()&0x1F80)==0x1F80;
+  return selected_batch[index]=enabled;
 }
 void Ch2k8CloseHotLog() {
   profiling.store(false, std::memory_order_release);
@@ -158,13 +172,14 @@ Ch2k8HotScope::Ch2k8HotScope(unsigned index, uint32_t descriptor, uint8_t *base,
          1) &
         0x1F;
   }
+  batch_ = ram_ && selected_batch[index];
   started_ = now_ns();
 }
 Ch2k8HotScope::~Ch2k8HotScope() {
   if (!started_)
     return;
   const auto now = now_ns();
-  auto &bin = bins[index_][ram_ ? 4 : store_ ? 3 : unpack_ ? 2 : fast_ ? 1 : 0];
+  auto &bin = bins[index_][batch_ ? 5 : ram_ ? 4 : store_ ? 3 : unpack_ ? 2 : fast_ ? 1 : 0];
   ++bin.calls;
   bin.units += units_;
   bin.nanoseconds += now - started_;

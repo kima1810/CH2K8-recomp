@@ -13,7 +13,7 @@ def summarize(path, start=0, end=float('inf')):
         for row in csv.DictReader(stream):
             if not start <= float(row['elapsed_ms'])/1000 < end:
                 continue
-            variant = 'native_ram' if row.get('ram_optimized') == '1' else 'pack_unpack_store' if row.get('store_optimized') == '1' else 'pack_unpack' if row.get('unpack_optimized') == '1' else 'optimized' if row['optimized'] == '1' else 'baseline'
+            variant = 'normalization_batch' if row.get('normalization_batch') == '1' else 'native_ram' if row.get('ram_optimized') == '1' else 'pack_unpack_store' if row.get('store_optimized') == '1' else 'pack_unpack' if row.get('unpack_optimized') == '1' else 'optimized' if row['optimized'] == '1' else 'baseline'
             total = totals[(row['function'], variant)]
             for key in total:
                 total[key] += int(row.get(key, 0))

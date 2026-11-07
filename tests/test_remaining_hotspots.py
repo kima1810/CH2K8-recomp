@@ -51,6 +51,9 @@ def test_old_pack_only_transform_upgrades_without_changing_retained_baseline():
     start = current.index('static void sub_84723778_unpack_fast(')
     end = current.index('\n}\n', start)+4
     old = current[:start]+current[end:]
+    start = old.index('template<bool Count>\nstatic void sub_84723778_geometry_fast(')
+    end = old.index('\n}\n', start)+4
+    old = old[:start]+old[end:]
     start = old.index('static void sub_84723778_ram_fast(')
     end = old.index('\n}\n', start)+4
     old = old[:start]+old[end:]

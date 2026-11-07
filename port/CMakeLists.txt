@@ -7,9 +7,13 @@ project(ch2k8 VERSION 0.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+include(cmake/Ch2k8BuildOptions.cmake)
 
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
 add_library(ch2k8_asset_codec SHARED ../tools/asset_codec.cpp)
+add_executable(ch2k8_tools ../tools/ch2k8_tools.cpp ../tools/asset_codec.cpp)
+target_link_libraries(ch2k8_tools PRIVATE bcrypt)
+target_compile_options(ch2k8_tools PRIVATE $<$<CXX_COMPILER_ID:Clang>:-O2>)
 if(WIN32)
     add_executable(ch2k8_assets_check ../tools/native_assets_check.cpp)
     target_compile_definitions(ch2k8_assets_check PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -34,13 +38,23 @@ file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rexglue.cmake"
     CONTENT "${CH2K8_SDK_CMAKE_CONTENT}" @ONLY)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CH2K8_SDK_CMAKE}")
 include("${CMAKE_CURRENT_BINARY_DIR}/rexglue.cmake")
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.build.stamp"
+    APPEND DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/run_codegen.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/fix_codegen.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/optimize_codegen.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prove_vector_store_ranges.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/geometry_batch_codegen.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/geometry_ram_codegen.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/geometry_input_codegen.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/gpu_wait_codegen.py")
 set(CH2K8_GAME_SOURCE "" CACHE FILEPATH "Xbox ISO or extracted disc directory for folder import")
 set(CH2K8_ASSET_DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/out/folder-game" CACHE PATH "New folder installation directory")
 if(CH2K8_GAME_SOURCE)
     add_custom_target(ch2k8_import_assets
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/loose_assets.py"
-                import "${CH2K8_GAME_SOURCE}" "${CH2K8_ASSET_DESTINATION}"
-        DEPENDS ch2k8_asset_codec
+        COMMAND $<TARGET_FILE:ch2k8_tools> import "${CH2K8_GAME_SOURCE}" "${CH2K8_ASSET_DESTINATION}"
+        DEPENDS ch2k8_tools
         USES_TERMINAL VERBATIM)
 endif()
 if(WIN32)
@@ -61,6 +75,7 @@ set(CH2K8_SOURCES
     src/frame_timing.cpp
     src/output_capture.cpp
     src/hot_functions.cpp
+    src/native_gpu_wait.cpp
     src/loose_device.cpp
 )
 
@@ -114,3 +129,11 @@ if(TARGET ch2k8_recomp)
     target_compile_options(ch2k8_recomp PRIVATE
         $<$<CXX_COMPILER_ID:Clang,AppleClang>:-Werror=shift-count-overflow>)
 endif()
+
+# Keep release optimization explicit even with an empty CMAKE_CXX_FLAGS_RELEASE.
+# No fast-math, host-only ISA extensions or changed guest arithmetic are enabled.
+foreach(CH2K8_BUILD_TARGET IN ITEMS ch2k8 ch2k8_recomp ch2k8_asset_codec ch2k8_tools ch2k8_assets_check ch2k8_vfs_check)
+    if(TARGET ${CH2K8_BUILD_TARGET})
+        ch2k8_apply_build_options(${CH2K8_BUILD_TARGET})
+    endif()
+endforeach()

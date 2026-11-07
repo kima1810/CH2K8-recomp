@@ -4,6 +4,8 @@ param(
     [ValidateSet('baseline','optimized')][string]$ShaderState = 'baseline',
     [ValidateSet('default','baseline','optimized')][string]$DepthState = 'default',
     [ValidateSet('default','baseline','optimized')][string]$FullWrite = 'default',
+    [ValidateSet('default','baseline','optimized','compare')][string]$VertexFetch = 'default',
+    [switch]$DumpShaders,
     [ValidateRange(20,600)][int]$DelaySeconds = 120,
     [ValidateRange(40,900)][int]$DurationSeconds = 200,
     [string]$Executable, [string]$GameData, [string]$RenderDoc,
@@ -41,6 +43,11 @@ if($ManualTrigger) {$arguments += "--ch2k8_gpu_capture_trigger=$run/capture.trig
 if ($FullWrite -ne 'default') {
     $arguments += if ($FullWrite -eq 'optimized') {'--ch2k8_native_full_write'} else {'--no-ch2k8_native_full_write'}
 }
+if ($VertexFetch -ne 'default') {
+    $arguments += if ($VertexFetch -eq 'baseline') {'--no-ch2k8_native_vertex_fetch'} else {'--ch2k8_native_vertex_fetch'}
+    if ($VertexFetch -eq 'compare') { $arguments += '--ch2k8_vertex_fetch_compare' }
+}
+if ($DumpShaders) { $arguments += @("--dump_shaders=$run/shaders", '--d3d12_dxbc_disasm', '--no-store_shaders') }
 foreach($argument in $arguments) {if($argument.Contains('"')) {throw 'Arguments must not contain double quotes.'}}
 $configuration=@{arguments=$arguments;run_root=$run;shader_state=$ShaderState;duration_seconds=$DurationSeconds;manual_trigger=[bool]$ManualTrigger;matched_scene=$false}
 if($ValidateOnly) {$configuration | ConvertTo-Json -Depth 4;return}

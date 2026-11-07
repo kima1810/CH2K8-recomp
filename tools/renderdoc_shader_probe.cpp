@@ -7,7 +7,10 @@
 #include <string>
 REPLAY_PROGRAM_MARKER();
 int main(int argc,char **argv) {
-  if(argc!=4) {puts("Usage: shader_probe capture.rdc event|shaders output-prefix");return 1;}
+  if(argc!=4 && argc!=5) {puts("Usage: shader_probe capture.rdc event|shaders output-prefix [--vertex]");return 1;}
+  const bool vertex=argc==5 && std::string(argv[4])=="--vertex";
+  if(argc==5 && !vertex)return 1;
+  const auto stage=vertex?ShaderStage::Vertex:ShaderStage::Pixel;
   RENDERDOC_InitialiseReplay(GlobalEnvironment{},{});
   auto file=RENDERDOC_OpenCaptureFile();
   if(!file->OpenFile(argv[1],"rdc").OK()) return 2;
@@ -21,8 +24,8 @@ int main(int argc,char **argv) {
     inventory<<"index\tname\tbytes\n";
     for(const auto &r:controller->GetResources()) {
       if(r.type!=ResourceType::Shader) continue;
-      auto shader=controller->GetShader(ResourceId(),r.resourceId,{"main",ShaderStage::Pixel});
-      if(!shader || shader->stage!=ShaderStage::Pixel || shader->rawBytes.empty()) continue;
+      auto shader=controller->GetShader(ResourceId(),r.resourceId,{"main",stage});
+      if(!shader || shader->stage!=stage || shader->rawBytes.empty()) continue;
       const auto prefix=std::string(argv[3])+"-shader"+std::to_string(index);
       std::ofstream binary(prefix+".dxbc",std::ios::binary);
       binary.write(reinterpret_cast<const char*>(shader->rawBytes.data()),shader->rawBytes.size());
@@ -31,17 +34,19 @@ int main(int argc,char **argv) {
       inventory<<index<<'\t'<<r.name.c_str()<<'\t'<<shader->rawBytes.size()<<'\n';
       if(++index==2048) break;
     }
-    printf("pixel_shaders,%u\n",index);
+    printf("%s_shaders,%u\n",vertex?"vertex":"pixel",index);
     controller->Shutdown();file->Shutdown();RENDERDOC_ShutdownReplay();return index?0:4;
   }
   controller->SetFrameEvent(unsigned(strtoul(argv[2],nullptr,10)),true);
   const auto state=controller->GetD3D12PipelineState();
-  if(!state || !state->pixelShader.reflection) return 4;
-  const auto reflection=state->pixelShader.reflection;
+  if(!state) return 4;
+  const auto &selected=vertex?state->vertexShader:state->pixelShader;
+  if(!selected.reflection)return 4;
+  const auto reflection=selected.reflection;
   const auto &bytes=reflection->rawBytes;
-  std::ofstream shader(std::string(argv[3])+"-ps.dxbc",std::ios::binary);
+  std::ofstream shader(std::string(argv[3])+(vertex?"-vs.dxbc":"-ps.dxbc"),std::ios::binary);
   shader.write(reinterpret_cast<const char*>(bytes.data()),bytes.size());shader.close();
-  auto usage=controller->GetUsage(state->pixelShader.resourceId);
+  auto usage=controller->GetUsage(selected.resourceId);
   printf("shader_usage_count,%zu\n",usage.size());
   for(const auto &u:usage) printf("usage,%u,%u\n",u.eventId,unsigned(u.usage));
   unsigned root=0;

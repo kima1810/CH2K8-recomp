@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fix_codegen import correct_directory
 from optimize_codegen import optimize_directory
+from gpu_wait_codegen import prepare_directory as prepare_gpu_wait
 
 
 def run_codegen(executable: Path, manifest: Path, generated: Path | None = None) -> int:
@@ -25,6 +26,8 @@ def run_codegen(executable: Path, manifest: Path, generated: Path | None = None)
             print(f"vupkd3d128: corrected {total} expressions in {changed} files", flush=True)
             optimized = optimize_directory(generated)
             print(f"hot functions: prepared {optimized} paired pack sites", flush=True)
+            gpu_waits=prepare_gpu_wait(generated)
+            print(f"GPU progress waits: prepared {gpu_waits} files",flush=True)
             # The SDK can rewrite a corrected file back to the broken form.
             # If correction restores identical bytes, avoid a pointless rebuild.
             for path, (digest, stat) in previous.items():

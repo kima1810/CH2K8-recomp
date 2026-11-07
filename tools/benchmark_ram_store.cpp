@@ -1,6 +1,7 @@
 // No game data: validate widened RAM stores, device exclusions and page watches.
 #include "ch2k8_pch.h"
 #include "vector_store_optimized.h"
+#include "linear_address_span.h"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -28,6 +29,18 @@ int check() {
   auto *a=static_cast<uint8_t*>(VirtualAlloc(nullptr,reserve_size,MEM_RESERVE,PAGE_NOACCESS));
   auto *b=static_cast<uint8_t*>(VirtualAlloc(nullptr,reserve_size,MEM_RESERVE,PAGE_NOACCESS));
   if(!a || !b) return 2;
+  for(uint32_t start : {0u,4u,0xDFFFFFF0u,0xDFFFFFF4u,0xE0000000u,0xFFFFFFF0u}) {
+    Ch2k8LinearAddressSpan linear;
+    for(uint64_t bytes : {0ull,1ull,16ull,48ull,0x100000000ull}) {
+      const uint64_t end=uint64_t(start)+bytes;
+      const bool expected=bytes && end<=0x100000000ull && !(start<0xE0000000u && end>0xE0000000ull);
+      if(linear.Prepare(b,start,bytes)!=expected)return 22;
+      if(expected)for(uint32_t ea : {start,uint32_t(end-1),start&~15u}) {
+        auto* base=b;
+        if(linear.Address(ea)!=REX_RAW_ADDR(ea))return 23;
+      }
+    }
+  }
   PPCVRegister source{};
   for(unsigned i=0;i<16;++i) source.u8[i]=uint8_t(17*i+3);
   unsigned comparisons=0;
@@ -45,6 +58,16 @@ int check() {
       if(std::memcmp(a+host_offset,b+host_offset,4096)) return 4;
       const bool expected=!(offset&3)&&Ch2k8RamStoreScope::IsOrdinaryRam(page+offset);
       if(native.counts[0]!=unsigned(expected)) return 5;
+      if(!(offset&3)) {
+        Ch2k8RamStoreScope prepared(true);
+        if(prepared.PrepareSpan(b,page+offset,16,&source,sizeof(source))) {
+          std::memset(b+host_offset,0xA5,4096);
+          auto* base=b;
+          if(prepared.PreparedAddress(page+offset)!=REX_RAW_ADDR(page+offset))return 20;
+          prepared.StorePreparedDirect(b,page+offset,source);
+          if(std::memcmp(a+host_offset,b+host_offset,4096))return 21;
+        }
+      }
       ++comparisons;
     }
   }

@@ -11,7 +11,10 @@ static void collect(const rdcarray<ActionDescription> &actions,std::vector<unsig
   for(const auto &a:actions) {ids.push_back(a.eventId);collect(a.children,ids);}
 }
 int main(int argc,char **argv) {
-  if(argc!=5 && argc!=6) {puts("Usage: shader_compare capture.rdc target-event candidate.dxbc output-prefix [control.dxbc]");return 1;}
+  const bool vertex=argc>1 && std::string(argv[argc-1])=="--vertex";
+  if(vertex)--argc;
+  if(argc!=5 && argc!=6) {puts("Usage: shader_compare capture.rdc target-event candidate.dxbc output-prefix [control.dxbc] [--vertex]");return 1;}
+  const auto stage=vertex?ShaderStage::Vertex:ShaderStage::Pixel;
   RENDERDOC_InitialiseReplay(GlobalEnvironment{},{});
   auto file=RENDERDOC_OpenCaptureFile();
   if(!file->OpenFile(argv[1],"rdc").OK()) return 2;
@@ -21,13 +24,15 @@ int main(int argc,char **argv) {
   const auto target=unsigned(strtoul(argv[2],nullptr,10));
   controller->SetFrameEvent(target,true);
   const auto state=controller->GetD3D12PipelineState();
-  if(!state || !state->pixelShader.reflection) return 4;
-  const auto original=state->pixelShader.resourceId;
+  if(!state) return 4;
+  const auto &selected=vertex?state->vertexShader:state->pixelShader;
+  if(!selected.reflection)return 4;
+  const auto original=selected.resourceId;
   std::ifstream input(argv[3],std::ios::binary|std::ios::ate);
   if(!input) return 5;
   bytebuf bytes;bytes.resize(size_t(input.tellg()));input.seekg(0);
   input.read(reinterpret_cast<char*>(bytes.data()),bytes.size());
-  auto built=controller->BuildTargetShader("main",ShaderEncoding::DXBC,bytes,{},ShaderStage::Pixel);
+  auto built=controller->BuildTargetShader("main",ShaderEncoding::DXBC,bytes,{},stage);
   if(built.first==ResourceId()) {printf("Build failed: %s\n",built.second.c_str());return 6;}
   ResourceId control;
   if(argc==6) {
@@ -35,7 +40,7 @@ int main(int argc,char **argv) {
     if(!source) return 5;
     bytebuf data;data.resize(size_t(source.tellg()));source.seekg(0);
     source.read(reinterpret_cast<char*>(data.data()),data.size());
-    auto baseline=controller->BuildTargetShader("main",ShaderEncoding::DXBC,data,{},ShaderStage::Pixel);
+    auto baseline=controller->BuildTargetShader("main",ShaderEncoding::DXBC,data,{},stage);
     if(baseline.first==ResourceId()) return 6;
     control=baseline.first;puts("Control shader: supplied bytecode");
   }

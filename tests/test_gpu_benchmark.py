@@ -12,6 +12,37 @@ sys.path.insert(0, str(ROOT/'tools'))
 from summarize_gpu_run import summarize_run, inspect_native_readback
 
 
+@pytest.mark.parametrize('mode,flag',[('baseline','--no-ch2k8_native_gpu_wait'),('optimized','--ch2k8_native_gpu_wait')])
+def test_gpu_wait_and_process_affinity_controls_are_explicit(tmp_path,mode,flag):
+    shell=shutil.which('powershell.exe')
+    if not shell:pytest.skip('Requires Windows PowerShell')
+    data=tmp_path/'disc';data.mkdir();(data/'default.xex').touch()
+    executable=tmp_path/'unused.exe';executable.touch()
+    result=subprocess.run([shell,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(ROOT/'tools/benchmark_gpu_path.ps1'),
+        '-ValidateOnly','-GameData',str(data),'-Executable',str(executable),'-NativeGpuWait',mode,'-GpuWaitStats','-CpuAffinityMask','5'],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    config=json.loads(result.stdout)
+    assert config['cpu_affinity_mask']=='0x5'
+    assert flag in config['arguments'] and '--ch2k8_gpu_wait_stats' in config['arguments']
+    assert not Path(config['run_root']).exists()
+
+
+@pytest.mark.parametrize('pacing,flag',[('baseline','--no-ch2k8_native_present_pacing'),('optimized','--ch2k8_native_present_pacing')])
+def test_visible_presentation_diagnostic_controls(tmp_path,pacing,flag):
+    shell=shutil.which('powershell.exe')
+    if not shell:pytest.skip('Requires Windows PowerShell')
+    data=tmp_path/'disc';data.mkdir();(data/'default.xex').touch()
+    executable=tmp_path/'unused.exe';executable.touch()
+    result=subprocess.run([shell,'-NoProfile','-ExecutionPolicy','Bypass','-File',str(ROOT/'tools/benchmark_gpu_path.ps1'),
+        '-ValidateOnly','-GameData',str(data),'-Executable',str(executable),'-Visible','-PresentStats','-PresentPacing',pacing],
+        capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    config=json.loads(result.stdout)
+    assert config['visible_window'] is True
+    assert flag in config['arguments'] and '--ch2k8_present_stats' in config['arguments']
+    assert not Path(config['run_root']).exists()
+
+
 @pytest.mark.parametrize('profile,backend,target,batching', [
     ('d3d12-rov', 'd3d12', '--render_target_path_d3d12=rov', False),
     ('d3d12-rov-batched', 'd3d12', '--render_target_path_d3d12=rov', True),
@@ -45,10 +76,20 @@ def test_gpu_profiles_launch_the_requested_path_without_changing_coherence(tmp_p
     assert not any('readback' in arg or 'occlusion' in arg for arg in args)
     assert '--ch2k8_output_capture_count=2' in args
     assert config['capture_seconds'] == 210 and not config['matched_scene']
+    assert config['visible_window'] is False
     assert not Path(config['run_root']).exists()
     (data/'default.xex').unlink()
     failure = subprocess.run(command, capture_output=True, text=True)
     assert failure.returncode != 0 and 'default.xex' in failure.stderr
+
+
+@pytest.mark.parametrize('effective,verified', [('0x5', True), ('0xffff', False), ('', False)])
+def test_gpu_summary_verifies_effective_affinity(tmp_path, effective, verified):
+    (tmp_path/'run.json').write_text(json.dumps({'cpu_affinity_mask':'0x5'}))
+    (tmp_path/'process.csv').write_text(
+        'elapsed_s,cpu_time_s,working_set_bytes,threads,cpu_affinity_mask\n'
+        f'120,200,1024,10,{effective}\n130,210,1024,10,{effective}\n')
+    assert summarize_run(tmp_path)['cpu_affinity_verified'] is verified
 
 
 def test_gpu_summary_keeps_unsupported_sensors_and_timing_limits(tmp_path):

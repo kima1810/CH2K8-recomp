@@ -201,8 +201,22 @@ def patch_header_v6(text):
     return replace_once(text,site,'      // CH2K8 proven RT0 full writes: only components X/Y belong to RT0.\n      if (ch2k8::FullWrite(state) && index == SystemConstants::Index::kEdramRTKeepMask &&\n          offset == offsetof(SystemConstants, edram_rt_keep_mask) && !(swizzle & 0xAAu))\n        return dxbc::Src::LU(0, 0, 0, 0);\n'+site)
 
 
-def patch_header(text):
+def patch_header_v7(text):
     return replace_once(patch_header_v6(text),'kVersion = 0x20261106;','kVersion = 0x20261107;')
+
+
+def patch_header_v8(text):
+    text=replace_once(patch_header_v7(text),'kVersion = 0x20261107;','kVersion = 0x20261108;')
+    text=replace_once(text,'#include <rex/graphics/native_pixel_state.h>',
+        '#include <rex/graphics/native_pixel_state.h>\n#include <rex/graphics/native_vertex_state.h>')
+    return replace_once(text,'Shader::kHostVertexShaderTypeBitCount;\n    } vertex;',
+        'Shader::kHostVertexShaderTypeBitCount;\n      uint32_t native_vertex_endian : 3;\n    } vertex;')
+
+
+def patch_header(text):
+    text=replace_once(patch_header_v8(text),'kVersion = 0x20261108;','kVersion = 0x20261109;')
+    return replace_once(text,'      uint32_t native_vertex_endian : 3;',
+        '      uint32_t native_vertex_endian : 3;\n      uint32_t native_vertex_memory : 2;\n      uint32_t native_index_endian : 3;')
 
 
 def patch_pipeline_v6_initial(text):
@@ -212,12 +226,53 @@ def patch_pipeline_v6_initial(text):
         'regs[reg::RB_BLENDCONTROL::rt_register_indices[0]] & 0x1FFF1FFFu,\n        REXCVAR_GET(ch2k8_native_full_write) &&\n        (draw_util::GetNormalizedColorMask(regs, shader.writes_color_targets()) & 15u) == 15u);')
 
 
-def patch_pipeline(text):
+def patch_pipeline_v7(text):
     text=replace_once(patch_pipeline_v6_initial(text),
         '(draw_util::GetNormalizedColorMask(regs, shader.writes_color_targets()) & 15u) == 15u);',
         'ch2k8::FullWriteEligible(uint32_t(rt0.color_format),\n            draw_util::GetNormalizedColorMask(regs, shader.writes_color_targets())));')
     return text.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,',
                         'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,')
+
+
+def patch_pipeline_vertex_v1(text):
+    text=patch_pipeline_v7(text)
+    text=replace_once(text,'REXCVAR_DEFINE_BOOL(ch2k8_native_pixel_state,', '''REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false, "GPU/CH2K8",
+                    "Specialize common vertex stream byte order per draw")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+REXCVAR_DEFINE_BOOL(ch2k8_native_pixel_state,''')
+    start=text.index('DxbcShaderTranslator::Modification PipelineCache::GetCurrentVertexShaderModification(')
+    end=text.index('\n}\n',start)
+    part=text[start:end]
+    part=replace_once(part,'  return modification;', '''  // CH2K8 common vertex endian v1
+  if(REXCVAR_GET(ch2k8_native_vertex_fetch)) {
+    modification.vertex.native_vertex_endian=ch2k8::SelectVertexEndian(
+        shader.constant_register_map().vertex_fetch_bitmap,
+        [&](uint32_t index){return uint32_t(regs.GetVertexFetch(index).endian);});
+  }
+  return modification;''')
+    return text[:start]+part+text[end:]
+
+
+def patch_pipeline_v8(text):
+    text=patch_pipeline_vertex_v1(text)
+    text=replace_once(text,'REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch,', '''REXCVAR_DEFINE_BOOL(ch2k8_vertex_fetch_compare, false, "GPU/CH2K8",
+                    "Diagnostic alternating dynamic/static vertex fetch shader variants")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch,''')
+    return replace_once(text,'  if(REXCVAR_GET(ch2k8_native_vertex_fetch)) {',
+        '  static thread_local uint32_t native_vertex_selection=0;\n'
+        '  if(REXCVAR_GET(ch2k8_native_vertex_fetch) &&\n'
+        '     (!REXCVAR_GET(ch2k8_vertex_fetch_compare) || (++native_vertex_selection&1))) {')
+
+
+def patch_pipeline(text):
+    text=patch_pipeline_v8(text)
+    text=text.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false,','REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, true,')
+    text=text.replace('Specialize common vertex stream byte order per draw','Specialize vertex byte order, index conversion and read-only memory binding')
+    return replace_once(text,'    modification.vertex.native_vertex_endian=ch2k8::SelectVertexEndian(',
+        '    modification.vertex.native_vertex_memory=1;\n    modification.vertex.native_vertex_endian=ch2k8::SelectVertexEndian(')
 
 
 def patch_output(text):
@@ -226,11 +281,40 @@ def patch_output(text):
         'a_.OpAnd(sample_temp_x_dest, LoadMaskedFlagsSystemConstant(kSysFlag_ROVDepthStencilEarlyWrite),\n                   dxbc::Src::LU(kSysFlag_ROVDepthStencilEarlyWrite));')
 
 
-def patch_shader(text):
+def patch_shader_v7(text):
     text=replace_once(text,'shader_modification.pixel.interpolator_mask = (UINT32_C(1) << xenos::kMaxInterpolators) - 1;',
         'shader_modification.SetPixelInterpolators((UINT32_C(1) << xenos::kMaxInterpolators) - 1, 0);')
     return replace_once(text,'shader_modification.pixel.interpolators_centroid &',
         'shader_modification.GetPixelCentroidMask() &')
+
+
+def patch_shader(text):
+    text=patch_shader_v7(text)
+    start=text.index("  {\n    // Swap the vertex index's endianness.")
+    end=text.index('  // Remap the index to the needed range',start)
+    original=text[start:end]
+    if original.count('a_.OpSwitch(endian_src);')!=2:raise ValueError('Unknown vertex index conversion')
+    native='''  // CH2K8 static index endian v1
+  const uint32_t native_index=GetDxbcShaderModification().vertex.native_index_endian;
+  if(native_index) {
+    const uint32_t endian=native_index-1;
+    const auto swap_dest=dxbc::Dest::R(reg,0b0010);
+    const auto swap_src=dxbc::Src::R(reg,dxbc::Src::kYYYY);
+    if(endian==1 || endian==2) {
+      a_.OpAnd(swap_dest,index_src,dxbc::Src::LU(0x00FF00FF));
+      a_.OpUShR(index_dest,index_src,dxbc::Src::LU(8));
+      a_.OpAnd(index_dest,index_src,dxbc::Src::LU(0x00FF00FF));
+      a_.OpUMAd(index_dest,swap_src,dxbc::Src::LU(256),index_src);
+    }
+    if(endian==2 || endian==3) {
+      a_.OpUShR(swap_dest,index_src,dxbc::Src::LU(16));
+      a_.OpBFI(index_dest,dxbc::Src::LU(16),dxbc::Src::LU(16),index_src,swap_src);
+    }
+    // The original path also initializes GPR0.y when no swap is required.
+    if(!uses_register_dynamic_addressing)a_.OpMov(swap_dest,dxbc::Src::LF(0.0f));
+  } else {
+'''
+    return text[:start]+native+original+'  }\n\n'+text[end:]
 
 
 def prepare_native_shaders(source):
@@ -250,25 +334,38 @@ def prepare_native_shaders(source):
         'include/rex/graphics/pipeline/shader/dxbc_translator.h':patch_header_v4,
         'src/graphics/d3d12/pipeline_cache.cpp':patch_pipeline_v4,
         'src/graphics/pipeline/shader/dxbc_translator_om.cpp':patch_output_v4,
-        'src/graphics/pipeline/shader/dxbc_translator.cpp':patch_shader,
+        'src/graphics/pipeline/shader/dxbc_translator.cpp':patch_shader_v7,
     }
     version5={
         'include/rex/graphics/pipeline/shader/dxbc_translator.h':patch_header_v5,
         'src/graphics/d3d12/pipeline_cache.cpp':patch_pipeline_v5,
         'src/graphics/pipeline/shader/dxbc_translator_om.cpp':patch_output,
-        'src/graphics/pipeline/shader/dxbc_translator.cpp':patch_shader,
+        'src/graphics/pipeline/shader/dxbc_translator.cpp':patch_shader_v7,
     }
     initial_v6=dict(version5)
     initial_v6.update({
         'include/rex/graphics/pipeline/shader/dxbc_translator.h':patch_header_v6,
         'src/graphics/d3d12/pipeline_cache.cpp':patch_pipeline_v6_initial,
     })
+    version7=dict(functions)
+    version7.update({
+        'include/rex/graphics/pipeline/shader/dxbc_translator.h':patch_header_v7,
+        'src/graphics/d3d12/pipeline_cache.cpp':patch_pipeline_v7,
+        'src/graphics/pipeline/shader/dxbc_translator.cpp':patch_shader_v7,
+    })
+    version8=dict(version7)
+    version8.update({
+        'include/rex/graphics/pipeline/shader/dxbc_translator.h':patch_header_v8,
+        'src/graphics/d3d12/pipeline_cache.cpp':patch_pipeline_v8,
+    })
     changes = {}
     for relative, patch in functions.items():
         original = subprocess.check_output(['git', '-C', str(source), 'show', 'HEAD:'+relative], text=True)
         expected = patch(original)
         path = source/relative
-        if path.read_text() not in (original, preceding[relative](original), version4[relative](original), version5[relative](original), initial_v6[relative](original), expected.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), expected.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), expected):
+        intermediate=patch_pipeline_vertex_v1(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
+        geometry_initial=expected.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, true,','REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false,').replace('Specialize vertex byte order, index conversion and read-only memory binding','Specialize common vertex stream byte order per draw')
+        if path.read_text() not in (original, preceding[relative](original), version4[relative](original), version5[relative](original), initial_v6[relative](original), version7[relative](original), version8[relative](original), intermediate, geometry_initial, expected.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), expected.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), expected):
             raise ValueError('Unreviewed shader SDK changes: '+relative)
         changes[path] = expected
     for path, expected in changes.items():
@@ -278,6 +375,9 @@ def prepare_native_shaders(source):
     data = (ROOT/'port/sdk_patches/native_pixel_state.h').read_bytes()
     if not destination.exists() or destination.read_bytes() != data:
         destination.write_bytes(data)
+    destination=source/'include/rex/graphics/native_vertex_state.h'
+    data=(ROOT/'port/sdk_patches/native_vertex_state.h').read_bytes()
+    if not destination.exists() or destination.read_bytes()!=data:destination.write_bytes(data)
 
 
 if __name__ == '__main__':
