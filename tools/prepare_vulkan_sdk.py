@@ -11,6 +11,7 @@ from prepare_content_sdk import prepare_content
 from prepare_native_vertex_sdk import prepare_native_vertex
 from prepare_native_presenter_sdk import prepare_native_presenter
 from prepare_portable_sdk import prepare_portable
+from prepare_display_sdk import prepare_display
 
 PIN = 'bd833a2ab69d305f99ddf57418fc38ffec8af93d'
 
@@ -29,6 +30,7 @@ def prepare(source):
     prepare_native_pcm(source)
     prepare_content(source)
     prepare_portable(source)
+    prepare_display(source)
     # Windows Git may check out symlinks as small text files. Materialize only
     # libmspack's tracked file links, using the target recorded in Git and
     # requiring both ends to remain inside that dependency.

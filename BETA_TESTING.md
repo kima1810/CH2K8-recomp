@@ -13,6 +13,13 @@ The target is Windows 10/11 x64 on Intel/AMD CPUs with SSE4.1 and a D3D12-capabl
 
 ## Compatibility record
 
+Monitor refresh and guest timing are separate: a 120/144 Hz display retains
+60 Hz guest video/VBlank timing. Automatic D3D12 GPU selection prefers Windows'
+high-performance adapter; `--d3d12_adapter=N` keeps explicit DXGI index selection.
+If a report still selects Intel UHD, confirm whether the machine has a discrete
+GPU. Integrated-only systems may remain GPU limited at 720p. Include the full
+exported report and frame timings; a startup log alone cannot establish FPS.
+
 Use one row per configuration; leave untested cells as **untested**, never passed.
 
 | Test ID | ZIP revision / runtime hash | Windows build | CPU / RAM | GPU / VRAM / driver | Display / scaling | Controller | Renderer / render path / mode / Hz | ISO import | Cold / warm boot | Menu / exhibition / replay | Save / reload | Legacy | Report / result |

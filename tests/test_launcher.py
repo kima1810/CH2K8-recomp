@@ -35,6 +35,7 @@ def test_launcher_builds_explicit_backend_and_display_args(tmp_path, backend, mo
     assert f'--ch2k8_renderer={backend}' in arguments
     assert '--resolution=1920x1080' in arguments
     assert '--video_mode_refresh_rate=120' in arguments
+    assert '--ch2k8_guest_refresh_rate=60' in arguments
     assert all(flag in arguments for flag in flags)
     if backend == 'vulkan':
         assert not any('render_target_path_d3d12' in arg for arg in arguments)

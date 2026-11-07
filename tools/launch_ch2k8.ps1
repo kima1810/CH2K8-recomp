@@ -215,7 +215,7 @@ function Get-LaunchConfiguration {
     $userData = Join-Path $repoRoot 'port/userdata'
     $arguments = @('--gpu_plugin=xenos', "--ch2k8_renderer=$Backend",
         "--game_data_root=$Data", "--user_data_root=$userData",
-        "--resolution=$Size", "--video_mode_refresh_rate=$Hertz")
+        "--resolution=$Size", "--video_mode_refresh_rate=$Hertz", '--ch2k8_guest_refresh_rate=60')
     if ($Mode -eq 'windowed') { $arguments += @('--no-fullscreen', '--no-fullscreen_exclusive') }
     elseif ($Mode -eq 'exclusive') { $arguments += @('--fullscreen', '--fullscreen_exclusive') }
     else { $arguments += @('--fullscreen', '--no-fullscreen_exclusive') }

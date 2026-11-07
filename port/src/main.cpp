@@ -254,7 +254,8 @@ protected:
           "occlusion_query_enable", "host_present_from_non_ui_thread",
           "draw_resolution_scale_x", "draw_resolution_scale_y", "dxbc_switch",
           "d3d12_pipeline_creation_threads",
-          "execute_unclipped_draw_vs_on_cpu"}) {
+          "execute_unclipped_draw_vs_on_cpu", "video_mode_refresh_rate",
+          "ch2k8_guest_refresh_rate", "d3d12_adapter", "vsync"}) {
       REXLOG_INFO("CH2K8 rendering configuration: {}={}", name,
                   rex::cvar::GetFlagByName(name));
     }
