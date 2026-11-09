@@ -272,14 +272,15 @@ def test_generated_script_callback_loads_global_and_tail_calls(tmp_path):
     assert execution.returncode == 0, f"Script callback failed: {execution.returncode}, {execution.stderr}"
 
 
-def test_generated_settings_getter_loads_stored_field(tmp_path):
+@pytest.mark.parametrize("address,field", [(0x84CA8998, 0x8565CE8C), (0x84CA8B60, 0x8565CE90)])
+def test_generated_settings_getter_loads_stored_field(tmp_path, address, field):
     root = Path(__file__).resolve().parents[1]
     generated = root / "port/generated/default"
     sdk = root / "port/sdk/include"
     compiler = shutil.which("clang++")
     if sys.platform != "win32" or not compiler or not sdk.is_dir() or not generated.is_dir():
         pytest.skip("Requires Windows, local ReXGlue SDK, generated game code, and clang++")
-    signature = "DEFINE_REX_FUNC(sub_84CA8998) {"
+    signature = f"DEFINE_REX_FUNC(sub_{address:08X}) {{"
     body = None
     for path in generated.glob("*_recomp.*.cpp"):
         text = path.read_text(encoding="utf-8")
@@ -288,7 +289,7 @@ def test_generated_settings_getter_loads_stored_field(tmp_path):
             body = text[start:text.index("\n}\n", start) + 3]
             break
     assert body is not None
-    assert "{ 0x84CA8998, sub_84CA8998 }" in (generated / "ch2k8_init.cpp").read_text()
+    assert f"{{ 0x{address:08X}, sub_{address:08X} }}" in (generated / "ch2k8_init.cpp").read_text()
     source = tmp_path / "settings_getter.cpp"
     executable = tmp_path / "settings_getter.exe"
     source.write_text(
@@ -299,9 +300,9 @@ def test_generated_settings_getter_loads_stored_field(tmp_path):
         "if (!VirtualAlloc(memory + 0x8565C000u, 4096, MEM_COMMIT, PAGE_READWRITE)) return 3;\n"
         "const uint32_t values[] = {0, 0x12345678, 0xF2345678};\n"
         "for (uint32_t value : values) {\n"
-        "*reinterpret_cast<uint32_t*>(memory + 0x8565CE8Cu) = __builtin_bswap32(value);\n"
+        f"*reinterpret_cast<uint32_t*>(memory + 0x{field:08X}u) = __builtin_bswap32(value);\n"
         "ctx.r3.u64 = 0xFFFFFFFFFFFFFFFFULL; ctx.lr = 0x12345678; ctx.r4.u64 = 0xAABB;\n"
-        "sub_84CA8998(ctx, memory);\n"
+        f"sub_{address:08X}(ctx, memory);\n"
         "assert(ctx.r3.u64 == value && ctx.lr == 0x12345678 && ctx.r4.u64 == 0xAABB);\n"
         "}\nVirtualFree(memory, 0, MEM_RELEASE);\n}\n", encoding="utf-8",
     )

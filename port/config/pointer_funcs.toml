@@ -90,3 +90,10 @@
 # six slots are registered. sub_84CA88F8 stores the same field offset.
 # See docs/findings/2026-11-04-settings-menu-getter.md.
 0x84CA8998 = { size = 16 }
+
+# [CONFIRMED] Log ch2k8-20261108-191915-7204 fatals after changing half length.
+# Runtime memory read: lis/addi 8565CC80, lwz r3,0x210(r11), blr; 84CA8B70 is
+# the next entry. Only reached through the pointer list entry at 8555F52C; no
+# other slot near it is missing. Twin of 84CA8998 beside sub_84CA8AC0.
+# See docs/findings/2026-11-04-settings-menu-getter.md.
+0x84CA8B60 = { size = 16 }

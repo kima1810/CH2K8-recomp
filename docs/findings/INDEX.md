@@ -11,7 +11,7 @@
 - [2026-11-03 Native presentation and Release build](2026-11-03-native-presentation-and-release-build.md): detect false-success VBlank waits instead of flooding host presentation; restore explicit optimized Release flags. Visible native-target samples improve from 622 ms to 26.5 ms median guest submissions with unchanged visual settings; older-hardware and consistent-60-FPS validation remain open.
 
 - [2026-11-03 Geometry and shader constants](2026-11-03-native-geometry-and-constants.md): exact draw-state specialization removes vertex/index compatibility branches; SIMD/bitset bookkeeping reduces local constant-update costs. Full EDRAM replay remains byte-identical, while controlled GPU time is effectively unchanged.
-- [2026-11-04 Settings menu getter](2026-11-04-settings-menu-getter.md): backing out of changed settings fatals on unregistered `84CA8998`; the four-instruction getter is registered.
+- [2026-11-04 Settings menu getter](2026-11-04-settings-menu-getter.md) documents the two registered settings getters.
 
 - [2026-11-02 Codegen and save review](2026-11-02-codegen-and-save-review.md): existing packed-vector/switch corrections verified; aggregate save enumeration avoids duplicate root visits; unknown buzzer-crash target remains unresolved.
 
