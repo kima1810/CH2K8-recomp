@@ -1,4 +1,4 @@
-"""Checked opt-in synchronization attribution; leaves all waits intact."""
+"""Apply checked synchronization instrumentation and readback reuse."""
 from pathlib import Path
 import subprocess
 from prepare_native_gpu_sdk import replace_once, patch_common, patch_backend
@@ -32,6 +32,8 @@ def patch_sync_attribution(text, kind):
 
 def patch_sync(text,kind):
     text=patch_sync_attribution(text,kind)
+    if kind == 'd3d12':
+        return patch_d3d12_waits(text)
     if kind!='common' or '// CH2K8 GPU progress notification v1' in text:return text
     text=replace_once(text,'#include <rex/graphics/native_sync_stats.h>',
         '#include <rex/graphics/native_sync_stats.h>\n#define CH2K8_GPU_PROGRESS_EXPORTS\n#include <rex/graphics/native_gpu_progress.h>\n// CH2K8 GPU progress notification v1')
@@ -39,6 +41,43 @@ def patch_sync(text,kind):
     text=replace_once(text,site,site+'      ch2k8::NativeGpuProgress().Notify();\n')
     site='  memory::store(memory_->TranslatePhysical(address), data_value);\n'
     return replace_once(text,site,site+'  ch2k8::NativeGpuProgress().Notify();\n')
+
+
+def patch_d3d12_waits(text):
+    marker = '// CH2K8 reuse the already-recorded memexport copy.'
+    if marker in text:
+        return text
+    text = replace_once(text, '''  if (!previous_slot_ready) {
+    IssueDraw_MemexportReadbackFullPath(total_size);
+    readback.current_index = read_index;
+    return true;
+  }
+
+  const uint8_t* readback_bytes = static_cast<const uint8_t*>(readback.mapped_data[read_index]);''',
+        '''  uint32_t completed_index = read_index;
+  if (!previous_slot_ready) {
+    // CH2K8 reuse the already-recorded memexport copy.
+    // Keep the synchronous fallback, but consume the current mapped slot
+    // instead of allocating another buffer and recording the same copy again.
+    ch2k8::SyncScope readback_wait(ch2k8::SyncKind::MemexportFallback);
+    const uint64_t copy_submission = readback.submission_written[write_index];
+    if (!AwaitAllQueueOperationsCompletion() || copy_submission > submission_completed_) {
+      readback.current_index = read_index;
+      return true;
+    }
+    completed_index = write_index;
+  }
+
+  const uint8_t* readback_bytes =
+      static_cast<const uint8_t*>(readback.mapped_data[completed_index]);''')
+    # Signal returns S_OK (zero). Combining it with && before SUCCEEDED
+    # short-circuits event registration, then waits on the unarmed event.
+    return replace_once(text, '''      if (SUCCEEDED(direct_queue->Signal(queue_operations_since_submission_fence_, fence_value) &&
+                    SUCCEEDED(queue_operations_since_submission_fence_->SetEventOnCompletion(
+                        fence_value, fence_completion_event_)))) {''',
+        '''      if (SUCCEEDED(direct_queue->Signal(queue_operations_since_submission_fence_, fence_value)) &&
+          SUCCEEDED(queue_operations_since_submission_fence_->SetEventOnCompletion(
+              fence_value, fence_completion_event_))) {''')
 
 
 def prepare_sync(source):

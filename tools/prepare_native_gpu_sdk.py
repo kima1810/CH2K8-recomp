@@ -249,7 +249,12 @@ def prepare_native_gpu(source):
         if current == published: expected = with_sync
         legacy=patch_sync(patch_backend_full_write(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
         geometry_legacy=patch_sync(patch_backend_geometry_v1(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
-        if current not in (original, previous, preceding, published, legacy, geometry_legacy, expected):
+        pre_wait_variants = ()
+        if '/d3d12/' in relative:
+            pre_wait_variants = tuple(patch_sync_attribution(patch(original, 'd3d12'), 'd3d12')
+                for patch in (patch_backend_v5, patch_backend_full_write, patch_backend_geometry_v1))
+        if current not in (original, previous, preceding, published, legacy, geometry_legacy,
+                           expected, *pre_wait_variants):
             raise ValueError('Unreviewed local GPU SDK changes: '+relative)
         paths[path] = expected
     # Validate every insertion before writing any backend source.

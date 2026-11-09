@@ -267,12 +267,48 @@ REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch,''')
         '     (!REXCVAR_GET(ch2k8_vertex_fetch_compare) || (++native_vertex_selection&1))) {')
 
 
-def patch_pipeline(text):
+def patch_pipeline_native_vertex(text):
     text=patch_pipeline_v8(text)
     text=text.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false,','REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, true,')
     text=text.replace('Specialize common vertex stream byte order per draw','Specialize vertex byte order, index conversion and read-only memory binding')
     return replace_once(text,'    modification.vertex.native_vertex_endian=ch2k8::SelectVertexEndian(',
         '    modification.vertex.native_vertex_memory=1;\n    modification.vertex.native_vertex_endian=ch2k8::SelectVertexEndian(')
+
+
+def patch_pipeline(text):
+    text = patch_pipeline_native_vertex(text)
+    text = replace_once(text, '#include <rex/graphics/flags.h>',
+        '#include <rex/graphics/flags.h>\n#include <rex/graphics/native_sync_stats.h>')
+    text = replace_once(text, 'REXCVAR_DEFINE_INT32(d3d12_pipeline_creation_threads,',
+        'REXCVAR_DEFINE_BOOL(ch2k8_parallel_pipeline_creation, true, "GPU/D3D12",\n'
+        '                    "Build translated pipelines on workers before replaying draws")\n'
+        '    .lifecycle(rex::cvar::Lifecycle::kInitOnly);\n\n'
+        'REXCVAR_DEFINE_INT32(d3d12_pipeline_creation_threads,')
+    text = replace_once(text, '  if (use_async) {\n    uint32_t bound_rts =',
+        '  // Synchronous mode still translates shaders and resolves root signatures\n'
+        '  // here. Only PSO creation is deferred. EndSubmission drains the workers\n'
+        '  // before replaying any recorded draw that uses a pipeline handle.\n'
+        '  const bool parallel_creation = REXCVAR_GET(ch2k8_parallel_pipeline_creation) &&\n'
+        '      !REXCVAR_GET(async_shader_compilation) && !creation_threads_.empty();\n'
+        '  if (use_async || parallel_creation) {\n    uint32_t bound_rts =')
+    text = replace_once(text,
+        '    new_pipeline->pending_vertex_shader = vertex_shader;\n'
+        '    new_pipeline->pending_pixel_shader = pixel_shader;',
+        '    if (use_async) {\n'
+        '      new_pipeline->pending_vertex_shader = vertex_shader;\n'
+        '      new_pipeline->pending_pixel_shader = pixel_shader;\n'
+        '    }')
+    text = replace_once(text, '    CreateQueuedPipelinesOnProcessorThread();\n    // Await creation',
+        '    ch2k8::SyncScope pipeline_wait(ch2k8::SyncKind::PipelineWait);\n'
+        '    CreateQueuedPipelinesOnProcessorThread();\n    // Await creation')
+    return replace_once(text,
+        '  if (FAILED(device->CreateGraphicsPipelineState(&state_desc, IID_PPV_ARGS(&state)))) {',
+        '  HRESULT creation_result;\n'
+        '  {\n'
+        '    ch2k8::SyncScope pipeline_creation(ch2k8::SyncKind::PipelineCreation);\n'
+        '    creation_result = device->CreateGraphicsPipelineState(&state_desc, IID_PPV_ARGS(&state));\n'
+        '  }\n'
+        '  if (FAILED(creation_result)) {')
 
 
 def patch_output(text):
@@ -364,8 +400,9 @@ def prepare_native_shaders(source):
         expected = patch(original)
         path = source/relative
         intermediate=patch_pipeline_vertex_v1(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
-        geometry_initial=expected.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, true,','REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false,').replace('Specialize vertex byte order, index conversion and read-only memory binding','Specialize common vertex stream byte order per draw')
-        if path.read_text() not in (original, preceding[relative](original), version4[relative](original), version5[relative](original), initial_v6[relative](original), version7[relative](original), version8[relative](original), intermediate, geometry_initial, expected.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), expected.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), expected):
+        previous = patch_pipeline_native_vertex(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
+        geometry_initial=previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, true,','REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false,').replace('Specialize vertex byte order, index conversion and read-only memory binding','Specialize common vertex stream byte order per draw')
+        if path.read_text() not in (original, preceding[relative](original), version4[relative](original), version5[relative](original), initial_v6[relative](original), version7[relative](original), version8[relative](original), intermediate, geometry_initial, previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), previous, expected):
             raise ValueError('Unreviewed shader SDK changes: '+relative)
         changes[path] = expected
     for path, expected in changes.items():
