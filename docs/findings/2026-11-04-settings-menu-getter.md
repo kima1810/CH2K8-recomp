@@ -1,5 +1,7 @@
 # 2026-11-04: Settings menu getter registration
 
+Updated 2026-11-08 with the twin getter `84CA8B60`.
+
 ## Question
 
 Why does the game terminate after changing a setting and backing out of the
@@ -34,3 +36,19 @@ return are preserved. No replacement value or game logic bypass is introduced.
 - Generated field-load execution check: **PASS**.
 - In-game retest: **PASS**. The user confirms the crash is fixed. Other
   unregistered callbacks may remain.
+
+## 2026-11-08: Half-length getter
+
+- `ch2k8-20261108-191915-7204.log` fatals with `0x84CA8B60` after the user
+  changes the half length. Windows again records `C0000409` in `ucrtbase.dll`.
+- A live memory read of a probe launch (separate user-data folder) gives
+  `lis/addi 8565CC80`, `lwz r3,0x210(r11)`, `blr`; `84CA8B70` is registered next.
+- An image scan finds one reference, at `8555F52C`. No other slot around it is
+  missing. The function is the twin of `84CA8998`, beside `sub_84CA8AC0`, and
+  reads the neighbouring field.
+- The same scan lists 51 unregistered pointer-list targets at function gaps
+  across the image. Most resemble compiler tables (this-adjust thunks,
+  save/restore helpers); none is registered without separate review.
+
+Correction: `0x84CA8B60 = { size = 16 }`. The settings-getter test is now
+parametrized over both getters.

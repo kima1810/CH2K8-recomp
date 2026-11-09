@@ -1,6 +1,6 @@
 # Findings index
 
-- [2026-11-04 Settings menu getter](2026-11-04-settings-menu-getter.md): backing out of changed settings fatals on unregistered `84CA8998`; the four-instruction getter is registered.
+- [2026-11-04 Settings menu getter](2026-11-04-settings-menu-getter.md): backing out of changed settings and changing half length fatal on unregistered `84CA8998` and `84CA8B60`; both four-instruction getters are registered.
 - [2026-11-03 Native GPU progress waits](2026-11-03-native-gpu-progress-wait.md): bounded native address waits retain original completion and cancellation checks; same-build demo runs use about 20% less process CPU. Scene-dependent FPS limits remain.
 
 - [2026-11-03 Native geometry kernels](2026-11-03-native-geometry-kernels.md): batch normalization, hoist span checks and share physical-address adaptation across three dominant kernels. Live interleaving reduces combined geometry work about 10%; identical-input full jobs improve 14%, 18% and 7%, with bit-exact state and RAM. Repeated normal-play windows produce 40–45% more submissions; scenes remain unmatched and stable 60 FPS is unproven.
