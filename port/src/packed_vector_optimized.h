@@ -23,13 +23,16 @@ inline void Ch2k8PackBiased64(PPCVRegister &destination,
   auto clamped =
       simde_mm_min_epi32(simde_mm_max_epi32(value, minimum), maximum);
   clamped = simde_mm_blendv_epi8(clamped, minimum, nan);
-  const uint64_t wz = uint64_t(simde_mm_cvtsi128_si64(clamped));
-  const uint64_t yx =
-      uint64_t(simde_mm_cvtsi128_si64(simde_mm_srli_si128(clamped, 8)));
-  scratch.u64[0] = ((yx >> 32) & 0xFFFFF) | ((yx & 0xFFFFF) << 20) |
-                   (((wz >> 32) & 0xFFFFF) << 40) | ((wz & 0xF) << 60);
+  // Form x/y and z/w pairs in separate 64-bit lanes, then join them.
+  // This keeps the bit packing in SIMD registers until the final write.
+  const auto ordered = simde_mm_shuffle_epi32(clamped, 0x1B);
+  const auto even = simde_mm_and_si128(ordered, simde_mm_set_epi32(0, 0xFFFFF, 0, 0xFFFFF));
+  const auto odd = simde_mm_and_si128(ordered, simde_mm_set_epi32(0xF, 0, 0xFFFFF, 0));
+  const auto pairs = simde_mm_or_si128(even, simde_mm_srli_epi64(odd, 12));
+  const auto upper = simde_mm_slli_epi64(simde_mm_srli_si128(pairs, 8), 40);
+  scratch.u64[0] = uint64_t(simde_mm_cvtsi128_si64(simde_mm_or_si128(pairs, upper)));
   scratch.u32[2] = 0x4040000F;
-  temporary.u32 = uint32_t(wz);
+  temporary.u32 = uint32_t(simde_mm_cvtsi128_si32(clamped));
   destination.u64[half] = scratch.u64[0];
 }
 
@@ -55,6 +58,32 @@ inline void Ch2k8UnpackBiased64(PPCVRegister &destination,
   scratch.u64[0] = packed;
   temporary.s32 = simde_mm_extract_epi32(signed_fields, 1);
   simde_mm_store_si128(reinterpret_cast<simde__m128i *>(destination.u32), bits);
+}
+
+inline void Ch2k8UnpackColor(PPCVRegister& destination, const PPCVRegister& source,
+                            PPCVRegister& scratch) {
+  const auto bytes = simde_mm_cvtsi32_si128(source.s32[0]);
+  const auto channels = simde_mm_shuffle_epi8(bytes, simde_mm_set_epi32(
+      int(0x80808002u), int(0x80808001u), int(0x80808000u), int(0x80808003u)));
+  const auto biased = simde_mm_or_si128(channels, simde_mm_set1_epi32(0x3F800000));
+  simde_mm_store_si128(reinterpret_cast<simde__m128i*>(scratch.u32), biased);
+  destination = scratch;
+}
+
+inline void Ch2k8UnpackBiased32(PPCVRegister& destination, const PPCVRegister& source,
+                               PPCRegister& temporary, PPCVRegister& scratch) {
+  const uint32_t packed = source.u32[0];
+  const auto shifted = simde_mm_mullo_epi32(simde_mm_set1_epi32(int32_t(packed)),
+      simde_mm_set_epi32(1 << 22, 1 << 12, 1 << 2, 0));
+  const auto fields = simde_mm_srai_epi32(shifted, 22);
+  auto biased = simde_mm_add_epi32(fields, simde_mm_set1_epi32(0x40400000));
+  // Only the low packed component maps the signed minimum to a NaN.
+  const auto sentinel = simde_mm_cmpeq_epi32(fields, simde_mm_set_epi32(-512, 512, 512, 512));
+  biased = simde_mm_blendv_epi8(biased, simde_mm_set1_epi32(0x7FC00000), sentinel);
+  scratch.u32[0] = (packed >> 30) | 0x3F800000u;
+  temporary.s32 = simde_mm_extract_epi32(fields, 1);
+  biased = simde_mm_insert_epi32(biased, int32_t(scratch.u32[0]), 0);
+  simde_mm_store_si128(reinterpret_cast<simde__m128i*>(destination.u32), biased);
 }
 
 // Selected once per guest function call, never per vector instruction.

@@ -52,6 +52,32 @@ def scalar_unpack(dst, src):
     return '\n'.join(lines)
 
 
+def vectorize_small_unpack(body):
+    """Replace the exact scalar color and 10:10:10:2 decode emissions."""
+    for dst, src, kind in re.findall(r'\t// vupkd3d128 (v\d+),(v\d+),([08])\n', body):
+        lines = [f'\t// vupkd3d128 {dst},{src},{kind}']
+        if kind == '0':
+            lines += [f'\tvTemp.u32[{lane}] = ctx.{src}.u8[{byte}] | 0x3F800000;'
+                      for lane, byte in enumerate((3, 0, 1, 2))]
+            lines.append(f'\tctx.{dst} = vTemp;')
+            call = f'Ch2k8UnpackColor(ctx.{dst}, ctx.{src}, vTemp);'
+        else:
+            for lane, shift in ((3, 22), (2, 12), (1, 2)):
+                value = ('temp.s32 == -512 ? 0x7FC00000 : (temp.s32 + 0x40400000)'
+                         if lane == 3 else 'temp.s32 + 0x40400000')
+                lines += [f'\ttemp.s32 = (ctx.{src}.s32[0] << {shift}) >> 22;',
+                          f'\tvTemp.s32[0] = {value};',
+                          f'\tctx.{dst}.u32[{lane}] = vTemp.u32[0];']
+            lines += [f'\tvTemp.u32[0] = (ctx.{src}.u32[0] >> 30) | 0x3F800000;',
+                      f'\tctx.{dst}.u32[0] = vTemp.u32[0];']
+            call = f'Ch2k8UnpackBiased32(ctx.{dst}, ctx.{src}, temp, vTemp);'
+        original = '\n'.join(lines) + '\n'
+        if original not in body:
+            raise ValueError(f'Unexpected geometry unpack emission: {lines[0]}')
+        body = body.replace(original, lines[0]+'\n\t'+call+'\n', 1)
+    return body
+
+
 def dispatch(signature, address, index, version=5):
     if version == 1:
         return (signature + '\n' + f'\tif (Ch2k8SelectFastVectorPack({index})) {{\n'
@@ -173,6 +199,7 @@ def optimize_source(original_text):
             native, input_sites=adapt_input_stream(geometry[:split],body,address)
             native, batch_groups=batch_normalization(native+'\n}\n')
             geometry=native[:-3]+geometry[split:]
+        geometry = vectorize_small_unpack(geometry)
         geometry = geometry.replace('native_ram.StorePreparedDirect(', 'native_ram.StorePreparedDirect<Count>(')
         geometry = geometry.replace('++native_ram.counts[1];', 'if constexpr(Count) ++native_ram.counts[1];')
         geometry = geometry.replace(signature,
