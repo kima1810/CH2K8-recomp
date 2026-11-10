@@ -1,5 +1,8 @@
 # Findings index
 
+- [2026-11-10 Legacy mode internals](2026-11-10-legacy-mode-internals.md)
+- [2026-11-10 Menu screen system](2026-11-10-menu-screen-system.md)
+
 - [2026-11-10 Archive input validation](2026-11-10-archive-input-validation.md) records extraction path checks and decoder validation.
 
 - [2026-11-03 Native GPU progress waits](2026-11-03-native-gpu-progress-wait.md): bounded native address waits retain original completion and cancellation checks; same-build demo runs use about 20% less process CPU. Scene-dependent FPS limits remain.
