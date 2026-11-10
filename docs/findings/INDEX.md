@@ -1,5 +1,7 @@
 # Findings index
 
+- [2026-11-10 Legacy mode internals](2026-11-10-legacy-mode-internals.md): league header and calendar, coach slots, team record, carousel and job security, recruiting pools and tasks, recruit records, prestige, development and conference swaps; runtime-checked fields marked.
+- [2026-11-10 Menu screen system](2026-11-10-menu-screen-system.md): screen descriptors, nav-item activation, pulled list bindings, option-item screens, layout-node bindings and engine-owned page flips.
 - [2026-11-10 Archive input validation](2026-11-10-archive-input-validation.md) records extraction path checks and decoder validation.
 
 - [2026-11-04 Settings menu getter](2026-11-04-settings-menu-getter.md): backing out of changed settings fatals on unregistered `84CA8998`; the four-instruction getter is registered.
