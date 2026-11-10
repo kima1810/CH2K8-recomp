@@ -1,3 +1,4 @@
+import json
 import struct
 import sys
 from pathlib import Path
@@ -58,3 +59,27 @@ def test_real_header_roundtrip():
     assert a.serialize_header() == a.header_bytes
     assert [e.hash for e in a.entries] == sorted(e.hash for e in a.entries)
     assert not any(e.size_flag for e in a.entries)
+
+
+@pytest.mark.parametrize("name", ["../escape.bin", r"..\escape.bin", "x:stream", "NUL.txt", "COM1 .bin", "file. "])
+def test_extraction_rejects_unsafe_name_map(tmp_path, name):
+    from types import SimpleNamespace
+
+    build_synthetic(tmp_path, {name: b"test"})
+    names = tmp_path / "names.json"
+    names.write_text(json.dumps({ar.name_hash(name): name}), encoding="utf-8")
+    archive = ar.open_archive(tmp_path, ar.load_names([names]))
+    args = SimpleNamespace(output=tmp_path / "output", index=None, name=None, full_extent=False)
+    with pytest.raises(ValueError, match="Unsafe extraction filename"):
+        ar.cmd_extract(archive, args)
+    assert list(args.output.iterdir()) == []
+
+
+def test_archive_rejects_path_in_part_table(tmp_path):
+    build_synthetic(tmp_path, {"file.bin": b"test"})
+    part = tmp_path / "0A"
+    data = bytearray(part.read_bytes())
+    data[32:40] = "../x".encode("utf-16-be")
+    part.write_bytes(data)
+    with pytest.raises(ValueError, match="Invalid archive part name"):
+        ar.open_archive(tmp_path)
