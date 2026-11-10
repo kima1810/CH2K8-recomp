@@ -27,9 +27,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import struct
 import sys
 from pathlib import Path
+
+from ch2k8_archive import validate_filename
 
 SECTOR = 0x800
 MAGIC = b"MICROSOFT*XBOX*MEDIA"
@@ -48,11 +51,18 @@ def find_base(f) -> int:
     raise SystemExit("no XDVDFS volume descriptor found")
 
 
-def walk(f, base: int, sector: int, size: int, prefix: str = ""):
+def walk(f, base: int, sector: int, size: int, prefix: str = "", _directories=None, _depth=0):
     """Yield (path, start_sector, size, attributes) depth-first, sorted by name."""
     if size == 0:
         return
-    f.seek(base + sector * SECTOR)
+    if _directories is None:_directories=set()
+    offset=base+sector*SECTOR
+    image_size=os.fstat(f.fileno()).st_size
+    if _depth>64 or offset in _directories:raise ValueError('Cyclic or excessively deep Xbox ISO directory')
+    if not 14<=size<=32<<20 or offset>image_size or size>image_size-offset:
+        raise ValueError('Xbox ISO directory exceeds image extent')
+    _directories.add(offset)
+    f.seek(offset)
     data = f.read(size)
     out = []
     seen = set()
@@ -60,12 +70,16 @@ def walk(f, base: int, sector: int, size: int, prefix: str = ""):
     while stack:
         off = stack.pop()
         if off in seen or off + DIRENT.size > len(data):
-            continue
+            raise ValueError('Invalid Xbox ISO directory tree')
         seen.add(off)
         left, right, start, length, attr, nlen = DIRENT.unpack_from(data, off)
         if left == 0xFFFF and right == 0xFFFF:
             continue  # sector fill
+        if not nlen or off+DIRENT.size+nlen>len(data):raise ValueError('Truncated Xbox ISO filename')
         name = data[off + DIRENT.size:off + DIRENT.size + nlen].decode("ascii")
+        validate_filename(name)
+        member_offset=base+start*SECTOR
+        if member_offset>image_size or length>image_size-member_offset:raise ValueError('Xbox ISO member exceeds image extent')
         out.append((name, start, length, attr))
         if left:
             stack.append(left * 4)
@@ -75,14 +89,18 @@ def walk(f, base: int, sector: int, size: int, prefix: str = ""):
         path = prefix + name
         yield path, start, length, attr
         if attr & ATTR_DIR:
-            yield from walk(f, base, start, length, path + "/")
+            yield from walk(f, base, start, length, path + "/", _directories, _depth+1)
 
 
 def open_image(path: Path):
     f = path.open("rb")
-    base = find_base(f)
-    f.seek(base + 32 * SECTOR)
-    _, root, root_size = VOLUME.unpack(f.read(VOLUME.size))
+    try:
+        base = find_base(f)
+        f.seek(base + 32 * SECTOR)
+        _, root, root_size = VOLUME.unpack(f.read(VOLUME.size))
+    except BaseException:
+        f.close()
+        raise
     return f, base, root, root_size
 
 
@@ -98,12 +116,14 @@ def cmd_list(args) -> None:
 
 def cmd_extract(args) -> None:
     f, base, root, root_size = open_image(args.image)
-    out = Path(args.output)
+    out = Path(args.output).resolve()
     want = {p.lower() for p in args.path or []}
     for path, start, size, attr in walk(f, base, root, root_size):
         if want and path.lower() not in want:
             continue
         dest = out / path
+        if dest.resolve() != dest:
+            raise ValueError(f"Linked Xbox ISO output path: {path}")
         if attr & ATTR_DIR:
             dest.mkdir(parents=True, exist_ok=True)
             continue

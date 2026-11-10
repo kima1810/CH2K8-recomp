@@ -1,5 +1,7 @@
 # Findings index
 
+- [2026-11-10 Archive input validation](2026-11-10-archive-input-validation.md) records extraction path checks and decoder validation.
+
 - [2026-11-01 Native pause-menu fix](2026-11-01-native-pause-fix.md): user validates responsive menus and no black flashes with native D3D12 plus bounded ownership extents, including normal 1440p borderless launch. Automatic now uses that configuration; ROV remains a compatibility fallback.
 
 - [2026-11-01 Menu writes and asymmetric blending](2026-11-01-menu-write-and-blend.md): proven full writes remove dynamic preservation work (3.00% incremental timed-menu reduction); exact asymmetric blending reduces the selected overlay draw 29.76%, with identical EDRAM. Aggregate blend savings and a complete severe-lag fix remain unestablished.
