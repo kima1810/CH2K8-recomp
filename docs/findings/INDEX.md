@@ -1,5 +1,7 @@
 # Findings index
 
+- [2026-11-10 Archive input validation](2026-11-10-archive-input-validation.md) records extraction path checks and decoder validation.
+
 - [2026-11-04 Settings menu getter](2026-11-04-settings-menu-getter.md): backing out of changed settings fatals on unregistered `84CA8998`; the four-instruction getter is registered.
 - [2026-11-03 Native GPU progress waits](2026-11-03-native-gpu-progress-wait.md): bounded native address waits retain original completion and cancellation checks; same-build demo runs use about 20% less process CPU. Scene-dependent FPS limits remain.
 
