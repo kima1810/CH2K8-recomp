@@ -1,5 +1,7 @@
 # Findings index
 
+- [2026-11-10 Archive input validation](2026-11-10-archive-input-validation.md) records extraction path checks and decoder validation.
+
 - [2026-11-03 Native GPU progress waits](2026-11-03-native-gpu-progress-wait.md): bounded native address waits retain original completion and cancellation checks; same-build demo runs use about 20% less process CPU. Scene-dependent FPS limits remain.
 
 - [2026-11-03 Native geometry kernels](2026-11-03-native-geometry-kernels.md): batch normalization, hoist span checks and share physical-address adaptation across three dominant kernels. Live interleaving reduces combined geometry work about 10%; identical-input full jobs improve 14%, 18% and 7%, with bit-exact state and RAM. Repeated normal-play windows produce 40–45% more submissions; scenes remain unmatched and stable 60 FPS is unproven.

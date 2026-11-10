@@ -1,10 +1,12 @@
 # Standalone native launcher tools: no game data, SDK or Python required.
 cmake_minimum_required(VERSION 3.25)
-project(ch2k8_launcher_tools LANGUAGES CXX)
+project(ch2k8_launcher_tools LANGUAGES C CXX)
 if(NOT WIN32)
     message(FATAL_ERROR "The beta launcher tools target Windows x64")
 endif()
 add_executable(ch2k8_tools ../ch2k8_tools.cpp ../asset_codec.cpp)
 target_compile_features(ch2k8_tools PRIVATE cxx_std_23)
+target_sources(ch2k8_tools PRIVATE ../../port/third_party/miniz/miniz.c)
+target_compile_definitions(ch2k8_tools PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_DEFLATE_APIS MINIZ_NO_ZLIB_APIS MINIZ_NO_STDIO)
 target_link_libraries(ch2k8_tools PRIVATE bcrypt)
 target_compile_options(ch2k8_tools PRIVATE $<$<CXX_COMPILER_ID:Clang>:-O2>)
