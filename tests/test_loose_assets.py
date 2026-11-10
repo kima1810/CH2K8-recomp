@@ -272,3 +272,16 @@ def test_native_dds_edit_never_rebuilds_guest_archive(tmp_path):
     good=(root/'native_dds.index').read_bytes();dds.write_bytes(value[:-1])
     with pytest.raises(ValueError,match='payload'):prepare(root)
     assert (root/'native_dds.index').read_bytes()==good
+
+
+def test_zlib_decode_rejects_expansion_past_declared_size():
+    import zlib
+
+    from xbox_asset_edits import decode_component
+
+    body = zlib.compress(b'A' * (1 << 20))
+    data = struct.pack('>4sIII', b'ZLIB', 1, 16 + len(body), 0) + body
+    with pytest.raises(ValueError, match='invalid ZLIB component payload'):
+        decode(data, 1)
+    with pytest.raises(ValueError, match='Invalid Xbox ZLIB payload'):
+        decode_component(data)

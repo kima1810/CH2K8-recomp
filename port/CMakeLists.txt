@@ -3,7 +3,7 @@
 # SDK boilerplate lives in generated/rexglue.cmake (written by `rexglue codegen`).
 
 cmake_minimum_required(VERSION 3.25)
-project(ch2k8 VERSION 0.0.1 LANGUAGES CXX)
+project(ch2k8 VERSION 0.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,6 +12,8 @@ include(cmake/Ch2k8BuildOptions.cmake)
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
 add_library(ch2k8_asset_codec SHARED ../tools/asset_codec.cpp)
 add_executable(ch2k8_tools ../tools/ch2k8_tools.cpp ../tools/asset_codec.cpp)
+target_sources(ch2k8_tools PRIVATE third_party/miniz/miniz.c)
+target_compile_definitions(ch2k8_tools PRIVATE MINIZ_NO_ARCHIVE_APIS MINIZ_NO_DEFLATE_APIS MINIZ_NO_ZLIB_APIS MINIZ_NO_STDIO)
 target_link_libraries(ch2k8_tools PRIVATE bcrypt)
 target_compile_options(ch2k8_tools PRIVATE $<$<CXX_COMPILER_ID:Clang>:-O2>)
 if(WIN32)
