@@ -214,7 +214,7 @@ int main() {
     unsigned polls = 0, waits = 0, consumed = 2;
     bool use_delayed_sync = mode != 2;
     constexpr unsigned write_index = 0, written_length = 16;
-    auto CheckSubmissionFence = [&](int) { ++polls; };
+    auto CheckSubmissionFence = [&](int) { ++polls; return true; };
     auto AwaitAllQueueOperationsCompletion = [&] {
       ++waits;
       if (mode != 3) submission_completed_ = 8;
@@ -305,7 +305,7 @@ def test_out_of_submission_fence_arms_event_before_waiting(sdk_source, tmp_path)
 #define PROFILE_CMD_BUFFER_STALL()
 #define REXGPU_ERROR(...) ++errors
 int main() {
-  for (int mode = 0; mode < 3; ++mode) {
+  for (int mode = 0; mode < 4; ++mode) {
     int errors = 0, waits = 0;
     struct Queue {
       int status;
@@ -319,17 +319,113 @@ int main() {
     } fence{mode == 2 ? -1 : 0};
     auto* direct_queue = &queue;
     auto* queue_operations_since_submission_fence_ = &fence;
-    constexpr int fence_value = 4, fence_completion_event_ = 9, INFINITE = -1;
+    constexpr int fence_value = 4, fence_completion_event_ = 9, INFINITE = -1, WAIT_OBJECT_0 = 0;
     bool queue_operations_done_since_submission_signal_ = true;
     auto WaitForSingleObject = [&](int event, int timeout) {
       assert(event == 9 && timeout == -1 && fence.armed == 1);
       ++waits;
+      return mode == 3 ? -1 : WAIT_OBJECT_0;
     };
+    const auto run = [&]() -> bool {
 '''+source[start:end]+r'''
-    assert(waits == (mode == 0));
+      return true;
+    };
+    assert(run() == (mode == 0));
+    assert(waits == (mode == 0 || mode == 3));
     assert(errors == (mode != 0));
     assert(fence.armed == (mode != 1));
     assert(queue_operations_done_since_submission_signal_ == (mode != 0));
+  }
+}
+''')
+
+
+def test_device_loss_sentinel_never_advances_gpu_completion(sdk_source, tmp_path):
+    source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('  uint64_t completed = submission_fence_->GetCompletedValue();')
+    end = source.index('  // Reclaim command allocators.', start)
+    execute(tmp_path, r'''
+#include <cassert>
+#include <cstdint>
+#define FAILED(status) ((status) < 0)
+#define PROFILE_CMD_BUFFER_STALL()
+#define REXGPU_ERROR(...) ((void)0)
+using HRESULT = int;
+int main() {
+  for (int mode = 0; mode < 4; ++mode) {
+    constexpr int fence_completion_event_ = 0, INFINITE = -1, WAIT_OBJECT_0 = 0;
+    constexpr int DXGI_ERROR_DEVICE_REMOVED = -2;
+    const uint64_t await_submission = 8;
+    uint64_t submission_completed_ = 6;
+    bool device_removed_ = false;
+    struct Fence {
+      uint64_t completed;
+      uint64_t GetCompletedValue() const {return completed;}
+      int SetEventOnCompletion(uint64_t, int) {return 0;}
+    } fence{mode == 0 ? UINT64_MAX : 7};
+    auto* submission_fence_ = &fence;
+    auto WaitForSingleObject = [&](int, int) {
+      fence.completed = mode == 1 ? UINT64_MAX : 8;
+      return mode == 2 ? -1 : WAIT_OBJECT_0;
+    };
+    struct Device {int GetDeviceRemovedReason() const {return -2;}} device;
+    struct Provider {Device* device; Device* GetDevice() const {return device;}};
+    auto GetD3D12Provider = [&] {return Provider{&device};};
+    auto LogDeviceRemovalDiagnostics = [](Device*, HRESULT reason) {assert(reason == -2);};
+    struct Graphics {
+      unsigned losses = 0;
+      void OnHostGpuLossFromAnyThread(bool) {++losses;}
+    } graphics;
+    auto* graphics_system_ = &graphics;
+    const auto run = [&]() -> bool {
+'''+source[start:end]+r'''
+      return reached;
+    };
+    assert(run() == (mode == 3));
+    assert(submission_completed_ == (mode == 3 ? 8 : 6));
+    assert(device_removed_ == (mode < 2));
+    assert(graphics.losses == unsigned(mode < 2));
+  }
+}
+''')
+
+
+def test_unsignaled_submission_stops_the_queue_without_advancing_fence(sdk_source, tmp_path):
+    source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('    const HRESULT signal = direct_queue->Signal(submission_fence_,')
+    end = source.index('    ++submission_current_;', start)+len('    ++submission_current_;')
+    execute(tmp_path, r'''
+#include <cassert>
+#include <cstdint>
+#define FAILED(status) ((status) < 0)
+using HRESULT = int;
+int main() {
+  constexpr HRESULT DXGI_ERROR_DEVICE_REMOVED = -2;
+  for (unsigned mode = 0; mode < 2; ++mode) {
+    const bool failed = mode != 0;
+    uint64_t submission_current_ = 7;
+    bool submission_open_ = true, device_removed_ = false;
+    struct Queue {
+      HRESULT result;
+      HRESULT Signal(void*, uint64_t value) {assert(value == 7); return result;}
+    } queue{failed ? DXGI_ERROR_DEVICE_REMOVED : 0};
+    auto* direct_queue = &queue;
+    void* submission_fence_ = nullptr;
+    struct Provider {void* GetDevice() {return nullptr;}} provider;
+    auto LogDeviceRemovalDiagnostics = [&](void*, HRESULT reason) {assert(reason == -2);};
+    struct Graphics {
+      unsigned losses = 0;
+      void OnHostGpuLossFromAnyThread(bool responsible) {assert(!responsible); ++losses;}
+    } graphics;
+    auto* graphics_system_ = &graphics;
+    const auto run = [&]() -> bool {
+'''+source[start:end]+r'''
+      return true;
+    };
+    assert(run() != failed);
+    assert(!submission_open_ && device_removed_ == failed);
+    assert(submission_current_ == (failed ? 7 : 8));
+    assert(graphics.losses == unsigned(failed));
   }
 }
 ''')

@@ -80,7 +80,7 @@ def patch_d3d12_waits_v1(text):
               fence_value, fence_completion_event_))) {''')
 
 
-def patch_d3d12_waits(text):
+def patch_d3d12_waits_v2(text):
     text = patch_d3d12_waits_v1(text)
     marker = '// CH2K8 retain readback buffers until their GPU writes complete.'
     if marker in text:
@@ -152,6 +152,123 @@ def patch_d3d12_waits(text):
       ++it;''')
 
 
+def patch_d3d12_waits(text):
+    text = patch_d3d12_waits_v2(text)
+    if '// CH2K8 propagate fence failures.' in text:
+        return text
+    text = replace_once(text, 'void D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {',
+        '''// CH2K8 propagate fence failures.
+bool D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
+  if (device_removed_) return false;''')
+    text = replace_once(text, '''    if (submission_open_) {
+      EndSubmission(false);
+    }
+    // Ending an open submission''', '''    if (submission_open_ && !EndSubmission(false)) {
+      return false;
+    }
+    // Ending an open submission''')
+    text = replace_once(text, '''        WaitForSingleObject(fence_completion_event_, INFINITE);
+        queue_operations_done_since_submission_signal_ = false;''', '''        if (WaitForSingleObject(fence_completion_event_, INFINITE) != WAIT_OBJECT_0) {
+          REXGPU_ERROR("Failed to wait for an out-of-submission fence event");
+          return false;
+        }
+        queue_operations_done_since_submission_signal_ = false;''')
+    text = replace_once(text, '            "Direct3D 12 fence");\n      }',
+                        '            "Direct3D 12 fence");\n        return false;\n      }')
+    start = text.index('  uint64_t submission_completed_before = submission_completed_;')
+    end = text.index('  // Reclaim command allocators.', start)
+    text = text[:start]+'''  uint64_t completed = submission_fence_->GetCompletedValue();
+  if (completed != UINT64_MAX && completed < await_submission) {
+    if (FAILED(submission_fence_->SetEventOnCompletion(await_submission, fence_completion_event_))) {
+      REXGPU_ERROR("Failed to register a submission fence event");
+      return false;
+    }
+    PROFILE_CMD_BUFFER_STALL();
+    if (WaitForSingleObject(fence_completion_event_, INFINITE) != WAIT_OBJECT_0) {
+      REXGPU_ERROR("Failed to wait for a submission fence event");
+      return false;
+    }
+    completed = submission_fence_->GetCompletedValue();
+  }
+  if (completed == UINT64_MAX) {
+    auto* device = GetD3D12Provider().GetDevice();
+    const HRESULT reason = device->GetDeviceRemovedReason();
+    device_removed_ = true;
+    LogDeviceRemovalDiagnostics(device, reason);
+    if (graphics_system_) {
+      graphics_system_->OnHostGpuLossFromAnyThread(reason != DXGI_ERROR_DEVICE_REMOVED);
+    }
+    return false;
+  }
+  const bool reached = completed >= await_submission;
+  if (!reached) {
+    REXGPU_ERROR("Failed to await a submission completion Direct3D 12 fence");
+  }
+  if (completed <= submission_completed_) {
+    return reached;
+  }
+  submission_completed_ = completed;
+
+'''+text[end:]
+    text = replace_once(text, '  texture_cache_->CompletedSubmissionUpdated(submission_completed_);\n}',
+                        '  texture_cache_->CompletedSubmissionUpdated(submission_completed_);\n  return reached;\n}')
+    text = replace_once(text, '''  CheckSubmissionFence(is_opening_frame ? closed_frame_submissions_[frame_current_ % kQueueFrames]
+                                        : 0);
+  // TODO(Triang3l): If failed to await (completed submission < awaited frame
+  // submission), do something like dropping the draw command that wanted to
+  // open the frame.''', '''  if (!CheckSubmissionFence(is_opening_frame ? closed_frame_submissions_[frame_current_ % kQueueFrames]
+                                             : 0)) {
+    return false;
+  }''')
+    text = replace_once(text, '''  // Check if the device is still available.
+  ID3D12Device* device = GetD3D12Provider().GetDevice();
+  HRESULT device_removed_reason = device->GetDeviceRemovedReason();
+  if (FAILED(device_removed_reason)) {
+    device_removed_ = true;
+    LogDeviceRemovalDiagnostics(device, device_removed_reason);
+    if (graphics_system_) {
+      graphics_system_->OnHostGpuLossFromAnyThread(device_removed_reason !=
+                                                   DXGI_ERROR_DEVICE_REMOVED);
+    }
+    return false;
+  }
+
+''', '')
+    text = replace_once(text, 'bool D3D12CommandProcessor::EndSubmission(bool is_swap) {\n',
+                        'bool D3D12CommandProcessor::EndSubmission(bool is_swap) {\n'
+                        '  if (device_removed_) return false;\n\n')
+    text = replace_once(text, '  CheckSubmissionFence(query_submission);\n  if (submission_completed_ < query_submission) {',
+                        '  if (!CheckSubmissionFence(query_submission)) {')
+    for slot in ('readback', 'rb'):
+        prefix = 'use_delayed_sync && ' if slot == 'rb' else ''
+        condition = f'{prefix}{slot}.submission_written[read_index] > submission_completed_'
+        text = replace_once(text, f'  if ({condition}) {{\n    CheckSubmissionFence(0);\n  }}',
+                            f'  if ({condition} && !CheckSubmissionFence(0)) {{\n    return true;\n  }}')
+    return replace_once(text, '''    direct_queue->Signal(submission_fence_, submission_current_++);
+
+    submission_open_ = false;''', '''    const HRESULT signal = direct_queue->Signal(submission_fence_, submission_current_);
+    submission_open_ = false;
+    if (FAILED(signal)) {
+      // The command list has already been executed. It cannot be retried or
+      // tracked by the submission fence, so stop using this device.
+      device_removed_ = true;
+      LogDeviceRemovalDiagnostics(provider.GetDevice(), signal);
+      if (graphics_system_) {
+        graphics_system_->OnHostGpuLossFromAnyThread(signal != DXGI_ERROR_DEVICE_REMOVED);
+      }
+      return false;
+    }
+    ++submission_current_;''')
+
+
+def patch_fence_header(text):
+    text = replace_once(text, '  void CheckSubmissionFence(uint64_t await_submission);',
+                        '  bool CheckSubmissionFence(uint64_t await_submission);')
+    return replace_once(text, '    CheckSubmissionFence(submission_current_);\n'
+                        '    return submission_completed_ + 1 >= submission_current_;',
+                        '    return CheckSubmissionFence(submission_current_);')
+
+
 def prepare_sync(source):
     changes={}
     for relative,kind in [('src/graphics/command_processor.cpp','common'),('src/graphics/d3d12/command_processor.cpp','d3d12')]:
@@ -160,9 +277,17 @@ def prepare_sync(source):
         expected=patch_sync(previous,kind); path=source/relative
         attributed = patch_sync_attribution(previous, kind)
         prior_waits = patch_d3d12_waits_v1(attributed) if kind == 'd3d12' else expected
-        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,expected):
+        prior_readbacks = patch_d3d12_waits_v2(attributed) if kind == 'd3d12' else expected
+        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,prior_readbacks,expected):
             raise ValueError('Unreviewed synchronization source: '+relative)
         changes[path]=expected
+    relative = 'include/rex/graphics/d3d12/command_processor.h'
+    original = subprocess.check_output(['git', '-C', str(source), 'show', 'HEAD:'+relative], text=True)
+    path = source/relative
+    expected = patch_fence_header(original)
+    if path.read_text(encoding='utf-8') not in (original, expected):
+        raise ValueError('Unreviewed synchronization source: '+relative)
+    changes[path] = expected
     for path,text in changes.items():
         if path.read_text(encoding='utf-8')!=text:path.write_text(text,encoding='utf-8',newline='\n')
     path=source/'include/rex/graphics/native_sync_stats.h'; data=(ROOT/'port/sdk_patches/native_sync_stats.h').read_bytes()
