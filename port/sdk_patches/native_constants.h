@@ -3,7 +3,9 @@
 #include <rex/graphics/registers.h>
 #include <rex/logging.h>
 #include <rex/graphics/native_constant_compare.h>
+#include <bit>
 #include <chrono>
+#include <cstring>
 
 REXCVAR_DECLARE(bool, ch2k8_native_constants);
 REXCVAR_DECLARE(bool, ch2k8_gpu_stats);
@@ -11,6 +13,33 @@ REXCVAR_DECLARE(bool, ch2k8_native_packets);
 REXCVAR_DECLARE(bool, ch2k8_packet_compare);
 
 namespace rex::graphics::ch2k8 {
+// Keep the translator's compact constant layout. Adjacent selected registers
+// can be copied together because they occupy adjacent slots in that layout.
+inline void PackFloatConstants(uint8_t* destination, const uint32_t* registers,
+                               const uint64_t* bitmap) {
+  constexpr unsigned kWordsPerVector = 4;
+  constexpr size_t kBytesPerVector = kWordsPerVector * sizeof(uint32_t);
+  for (unsigned group = 0; group < 4; ++group) {
+    const uint32_t* source = registers + group * 64 * kWordsPerVector;
+    uint64_t remaining = bitmap[group];
+    if (!remaining) continue;
+    const unsigned first = std::countr_zero(remaining);
+    const uint64_t shifted = remaining >> first;
+    if ((shifted & (shifted + 1)) == 0) {
+      const size_t bytes = std::countr_one(shifted) * kBytesPerVector;
+      std::memcpy(destination, source + first * kWordsPerVector, bytes);
+      destination += bytes;
+      continue;
+    }
+    while (remaining) {
+      const unsigned index = std::countr_zero(remaining);
+      std::memcpy(destination, source + index * kWordsPerVector, kBytesPerVector);
+      destination += kBytesPerVector;
+      remaining &= remaining - 1;
+    }
+  }
+}
+
 struct ConstantStats {
   uint64_t single_requests = 0, range_requests = 0, requested_words = 0;
   uint64_t skipped_requests = 0, skipped_words = 0;

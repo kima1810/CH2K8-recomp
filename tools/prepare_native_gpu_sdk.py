@@ -118,7 +118,7 @@ def patch_backend_geometry_v1(text,backend):
 '''+site)
 
 
-def patch_backend(text,backend):
+def patch_backend_before_float_pack(text,backend):
     text=patch_backend_geometry_v1(text,backend)
     if backend!='d3d12' or '// CH2K8 memexport geometry fallback v1' in text:return text
     return replace_once(text,'''    vertex_shader_modification.vertex.native_vertex_memory=memexport_used?2:1;
@@ -133,6 +133,32 @@ def patch_backend(text,backend):
       vertex_shader_modification.vertex.native_index_endian=
           uint32_t(primitive_processing_result.host_shader_index_endian)+1;
     }''')
+
+
+def patch_backend(text, backend):
+    text = patch_backend_before_float_pack(text, backend)
+    if backend != 'd3d12' or '// CH2K8 pack contiguous float constants.' in text:
+        return text
+    for stage, first_register, indent in (('vertex', '000', '    '), ('pixel', '256', '      ')):
+        bitmap = f'float_constant_map_{stage}.float_bitmap'
+        old = f'''for (uint32_t i = 0; i < 4; ++i) {{
+  uint64_t float_constant_map_entry = {bitmap}[i];
+  uint32_t float_constant_index;
+  while (rex::bit_scan_forward(float_constant_map_entry, &float_constant_index)) {{
+    float_constant_map_entry &= ~(1ull << float_constant_index);
+    std::memcpy(
+        float_constants,
+        &regs[XE_GPU_REG_SHADER_CONSTANT_{first_register}_X + (i << 8) + (float_constant_index << 2)],
+        4 * sizeof(float));
+    float_constants += 4 * sizeof(float);
+  }}
+}}'''
+        old = '\n'.join(indent + line for line in old.splitlines())
+        new = (f'{indent}// CH2K8 pack contiguous float constants.\n'
+               f'{indent}ch2k8::PackFloatConstants(float_constants,\n'
+               f'{indent}    &regs[XE_GPU_REG_SHADER_CONSTANT_{first_register}_X], {bitmap});')
+        text = replace_once(text, old, new)
+    return text
 
 
 def patch_changed_usage(text):
@@ -254,6 +280,10 @@ def prepare_native_gpu(source):
         if '/d3d12/' in relative:
             pre_wait_variants = tuple(patch_sync_attribution(patch(original, 'd3d12'), 'd3d12')
                 for patch in (patch_backend_v5, patch_backend_full_write, patch_backend_geometry_v1))
+            pre_pack = patch_backend_before_float_pack(original, 'd3d12')
+            pre_wait_variants += (pre_pack, patch_sync_attribution(pre_pack, 'd3d12'),
+                                  patch_d3d12_waits_v1(patch_sync_attribution(pre_pack, 'd3d12')),
+                                  patch_sync(pre_pack, 'd3d12'))
             if current == patch_d3d12_waits_v1(patch_sync_attribution(expected, 'd3d12')):
                 expected = current
         if current not in (original, previous, preceding, published, legacy, geometry_legacy,
