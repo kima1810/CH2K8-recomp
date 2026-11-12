@@ -275,7 +275,7 @@ def patch_pipeline_native_vertex(text):
         '    modification.vertex.native_vertex_memory=1;\n    modification.vertex.native_vertex_endian=ch2k8::SelectVertexEndian(')
 
 
-def patch_pipeline(text):
+def patch_pipeline_parallel(text):
     text = patch_pipeline_native_vertex(text)
     text = replace_once(text, '#include <rex/graphics/flags.h>',
         '#include <rex/graphics/flags.h>\n#include <rex/graphics/native_sync_stats.h>')
@@ -309,6 +309,13 @@ def patch_pipeline(text):
         '    creation_result = device->CreateGraphicsPipelineState(&state_desc, IID_PPV_ARGS(&state));\n'
         '  }\n'
         '  if (FAILED(creation_result)) {')
+
+
+def patch_pipeline(text):
+    text = patch_pipeline_parallel(text)
+    return replace_once(text, '      if (!shader && !write_pipeline) {\n',
+        '      // Process a pending flush before sleeping, even with no more records.\n'
+        '      if (!shader && !write_pipeline && !flush_shaders && !flush_pipelines) {\n')
 
 
 def patch_output(text):
@@ -401,8 +408,9 @@ def prepare_native_shaders(source):
         path = source/relative
         intermediate=patch_pipeline_vertex_v1(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
         previous = patch_pipeline_native_vertex(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
+        parallel = patch_pipeline_parallel(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
         geometry_initial=previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, true,','REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false,').replace('Specialize vertex byte order, index conversion and read-only memory binding','Specialize common vertex stream byte order per draw')
-        if path.read_text() not in (original, preceding[relative](original), version4[relative](original), version5[relative](original), initial_v6[relative](original), version7[relative](original), version8[relative](original), intermediate, geometry_initial, previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), previous, expected):
+        if path.read_text() not in (original, preceding[relative](original), version4[relative](original), version5[relative](original), initial_v6[relative](original), version7[relative](original), version8[relative](original), intermediate, geometry_initial, previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), previous, parallel, expected):
             raise ValueError('Unreviewed shader SDK changes: '+relative)
         changes[path] = expected
     for path, expected in changes.items():

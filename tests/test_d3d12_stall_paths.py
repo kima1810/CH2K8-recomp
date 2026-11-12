@@ -87,6 +87,30 @@ int main() {
 ''')
 
 
+def test_storage_writer_runs_pending_flush_before_waiting(sdk_source, tmp_path):
+    source = patch_pipeline(original(sdk_source, 'pipeline_cache'))
+    start = source.index('      if (!shader && !write_pipeline')
+    end = source.index('\n    }', start)
+    execute(tmp_path, r'''
+#include <cassert>
+int main() {
+  for (unsigned mode = 0; mode < 16; ++mode) {
+    const bool shader = mode & 1, write_pipeline = mode & 2;
+    const bool flush_shaders = mode & 4, flush_pipelines = mode & 8;
+    struct Condition {
+      unsigned calls = 0;
+      void wait(int) { ++calls; }
+    } storage_write_request_cond_;
+    constexpr int lock = 0;
+    for (unsigned iteration = 0; iteration < 1; ++iteration) {
+'''+source[start:end]+r'''
+    }
+    assert(storage_write_request_cond_.calls == (mode == 0));
+  }
+}
+''')
+
+
 def test_memexport_consumes_only_completed_copies(sdk_source, tmp_path):
     source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
     start = source.index('  uint32_t completed_index = read_index;')
