@@ -152,7 +152,7 @@ def patch_d3d12_waits_v2(text):
       ++it;''')
 
 
-def patch_d3d12_waits(text):
+def patch_d3d12_waits_v3(text):
     text = patch_d3d12_waits_v2(text)
     if '// CH2K8 propagate fence failures.' in text:
         return text
@@ -261,12 +261,61 @@ bool D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
     ++submission_current_;''')
 
 
+def patch_d3d12_waits(text):
+    text = patch_d3d12_waits_v3(text)
+    if '// CH2K8 right-size scratch allocations.' in text:
+        return text
+    text = replace_once(text, '  size = rex::align(size, kScratchBufferSizeIncrement);',
+        '''  // CH2K8 right-size scratch allocations.
+  // Keep geometric growth for small buffers and the original step for large ones.
+  if (size <= kScratchBufferSizeIncrement) {
+    size = std::bit_ceil(std::max(size, UINT32_C(1) << 20));
+  } else {
+    if (size > UINT32_MAX - (kScratchBufferSizeIncrement - 1)) return nullptr;
+    size = rex::align(size, kScratchBufferSizeIncrement);
+  }''')
+    text = replace_once(text, '''  scratch_buffer_ = buffer;
+  scratch_buffer_size_ = size;''', '''  scratch_buffer_ = buffer;
+  scratch_buffer_size_ = size;
+  if (REXCVAR_GET(ch2k8_gpu_stats)) {
+    REXGPU_INFO("CH2K8 scratch GPU allocation: {} MiB", size >> 20);
+  }''')
+    text = replace_once(text, '''  if (buffer == scratch_buffer_) {
+    scratch_buffer_state_ = new_state;
+  }''', '''  if (buffer == scratch_buffer_) {
+    scratch_buffer_state_ = new_state;
+    scratch_buffer_last_frame_ = frame_current_;
+    scratch_buffer_last_submission_ = submission_current_;
+  }''')
+    return replace_once(text, '    EvictOldReadbackBuffers(readback_buffers_);',
+        '''    // Trim a large transient buffer only after its last GPU use and 120 idle frames.
+    if (scratch_buffer_size_ > kScratchBufferSizeIncrement && !scratch_buffer_used_ &&
+        scratch_buffer_last_submission_ <= submission_completed_ &&
+        frame_current_ > scratch_buffer_last_frame_ &&
+        frame_current_ - scratch_buffer_last_frame_ >= 120) {
+      if (REXCVAR_GET(ch2k8_gpu_stats)) {
+        REXGPU_INFO("CH2K8 released idle scratch GPU allocation: {} MiB",
+                    scratch_buffer_size_ >> 20);
+      }
+      ui::d3d12::util::ReleaseAndNull(scratch_buffer_);
+      scratch_buffer_size_ = 0;
+    }
+    EvictOldReadbackBuffers(readback_buffers_);''')
+
+
 def patch_fence_header(text):
     text = replace_once(text, '  void CheckSubmissionFence(uint64_t await_submission);',
                         '  bool CheckSubmissionFence(uint64_t await_submission);')
     return replace_once(text, '    CheckSubmissionFence(submission_current_);\n'
                         '    return submission_completed_ + 1 >= submission_current_;',
                         '    return CheckSubmissionFence(submission_current_);')
+
+
+def patch_scratch_header(text):
+    return replace_once(text, '  uint32_t scratch_buffer_size_ = 0;',
+                        '  uint32_t scratch_buffer_size_ = 0;\n'
+                        '  uint64_t scratch_buffer_last_frame_ = 0;\n'
+                        '  uint64_t scratch_buffer_last_submission_ = 0;')
 
 
 def prepare_sync(source):
@@ -278,14 +327,16 @@ def prepare_sync(source):
         attributed = patch_sync_attribution(previous, kind)
         prior_waits = patch_d3d12_waits_v1(attributed) if kind == 'd3d12' else expected
         prior_readbacks = patch_d3d12_waits_v2(attributed) if kind == 'd3d12' else expected
-        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,prior_readbacks,expected):
+        prior_fences = patch_d3d12_waits_v3(attributed) if kind == 'd3d12' else expected
+        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,prior_readbacks,prior_fences,expected):
             raise ValueError('Unreviewed synchronization source: '+relative)
         changes[path]=expected
     relative = 'include/rex/graphics/d3d12/command_processor.h'
     original = subprocess.check_output(['git', '-C', str(source), 'show', 'HEAD:'+relative], text=True)
     path = source/relative
-    expected = patch_fence_header(original)
-    if path.read_text(encoding='utf-8') not in (original, expected):
+    prior_header = patch_fence_header(original)
+    expected = patch_scratch_header(prior_header)
+    if path.read_text(encoding='utf-8') not in (original, prior_header, expected):
         raise ValueError('Unreviewed synchronization source: '+relative)
     changes[path] = expected
     for path,text in changes.items():

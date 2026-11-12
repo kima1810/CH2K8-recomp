@@ -87,6 +87,50 @@ int main() {
 ''')
 
 
+def test_scratch_vram_buckets_and_fence_safe_idle_trim(sdk_source, tmp_path):
+    source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('  // CH2K8 right-size scratch allocations.')
+    end = source.index('\n\n  const ui::d3d12::D3D12Provider& provider', start)
+    trim = source.index('    // Trim a large transient buffer')
+    trim_end = source.index('    EvictOldReadbackBuffers(readback_buffers_);', trim)
+    execute(tmp_path, r'''
+#include <algorithm>
+#include <bit>
+#include <cassert>
+#include <cstdint>
+#define REXCVAR_GET(...) false
+#define REXGPU_INFO(...) ((void)0)
+constexpr uint32_t MiB = 1u << 20, kScratchBufferSizeIncrement = 16 * MiB;
+namespace rex {uint32_t align(uint32_t value, uint32_t step) {return (value + step - 1) & ~(step - 1);}}
+const uint32_t* AllocationSize(uint32_t size) {
+'''+source[start:end]+r'''
+  static uint32_t result;
+  result = size;
+  return &result;
+}
+namespace ui::d3d12::util {void ReleaseAndNull(int*& resource) {assert(resource); resource = nullptr;}}
+int main() {
+  assert(*AllocationSize(4) == MiB);
+  assert(*AllocationSize(MiB + 1) == 2 * MiB);
+  assert(*AllocationSize(16 * MiB) == 16 * MiB);
+  assert(*AllocationSize(16 * MiB + 1) == 32 * MiB);
+  assert(AllocationSize(UINT32_MAX) == nullptr);
+  for (unsigned mode = 0; mode < 5; ++mode) {
+    int resource = 1;
+    int* scratch_buffer_ = &resource;
+    uint32_t scratch_buffer_size_ = mode == 1 ? 16 * MiB : 32 * MiB;
+    bool scratch_buffer_used_ = mode == 2;
+    uint64_t scratch_buffer_last_submission_ = 7;
+    uint64_t submission_completed_ = mode == 3 ? 6 : 7;
+    uint64_t scratch_buffer_last_frame_ = 20, frame_current_ = mode == 4 ? 139 : 140;
+'''+source[trim:trim_end]+r'''
+    assert((scratch_buffer_ == nullptr) == (mode == 0));
+    assert((scratch_buffer_size_ == 0) == (mode == 0));
+  }
+}
+''')
+
+
 def test_storage_writer_runs_pending_flush_before_waiting(sdk_source, tmp_path):
     source = patch_pipeline(original(sdk_source, 'pipeline_cache'))
     start = source.index('      if (!shader && !write_pipeline')
