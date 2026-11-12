@@ -509,3 +509,34 @@ int main() {
   }
 }
 ''')
+
+
+def test_invisible_draw_culling_preserves_rendering_queries_and_exports(sdk_source, tmp_path):
+    from prepare_native_gpu_sdk import patch_backend
+
+    source = patch_backend(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('  // CH2K8 discard draws without visible effects.')
+    end = source.index('  if (!BeginSubmission(true))', start)
+    execute(tmp_path, r'''
+#include <cassert>
+#include <cstdint>
+#define REXCVAR_GET(flag) flag
+#define REXGPU_INFO(...)
+int main() {
+  for (unsigned mode = 0; mode < 9; ++mode) {
+    const bool ch2k8_skip_invisible_draws = mode != 0;
+    const bool ch2k8_gpu_stats = false;
+    const bool memexport_used = mode == 3;
+    struct {bool valid;} active_occlusion_query_{mode == 4};
+    struct {unsigned extent[2];} scissor{{mode == 2 || mode == 3 ? 0u : 32u, 32u}};
+    const unsigned normalized_color_mask = mode == 2 || mode == 5 ? 15u : 0u;
+    struct {bool stencil_enable, z_enable, z_write_enable;} normalized_depth_control{
+        mode == 6, mode == 7 || mode == 8, mode == 7};
+    const auto skips_draw = [&] {
+'''+source[start:end]+r'''
+      return false;
+    };
+    assert(skips_draw() == (mode == 1 || mode == 2 || mode == 8));
+  }
+}
+''')

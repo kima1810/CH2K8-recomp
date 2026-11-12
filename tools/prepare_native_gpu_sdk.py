@@ -135,7 +135,7 @@ def patch_backend_before_float_pack(text,backend):
     }''')
 
 
-def patch_backend(text, backend):
+def patch_backend_float_pack(text, backend):
     text = patch_backend_before_float_pack(text, backend)
     if backend != 'd3d12' or '// CH2K8 pack contiguous float constants.' in text:
         return text
@@ -159,6 +159,45 @@ def patch_backend(text, backend):
                f'{indent}    &regs[XE_GPU_REG_SHADER_CONSTANT_{first_register}_X], {bitmap});')
         text = replace_once(text, old, new)
     return text
+
+
+def patch_backend(text, backend):
+    text = patch_backend_float_pack(text, backend)
+    marker = '// CH2K8 discard draws without visible effects.'
+    if backend != 'd3d12' or marker in text:
+        return text
+    text = replace_once(text, 'REXCVAR_DEFINE_BOOL(d3d12_readback_memexport,', '''REXCVAR_DEFINE_BOOL(ch2k8_skip_invisible_draws, true, "GPU/CH2K8",
+                    "Skip D3D12 draws with no framebuffer, query, or memory effects")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(d3d12_readback_memexport,''')
+    draw_start = text.index('bool D3D12CommandProcessor::IssueDraw(')
+    prefix, draw = text[:draw_start], text[draw_start:]
+    depth = '  reg::RB_DEPTHCONTROL normalized_depth_control = draw_util::GetNormalizedDepthControl(regs);\n'
+    color = '''  uint32_t normalized_color_mask =
+      pixel_shader ? draw_util::GetNormalizedColorMask(regs, pixel_shader->writes_color_targets())
+                   : 0;
+'''
+    scissor = '  draw_util::Scissor scissor;\n  draw_util::GetScissor(regs, scissor);\n'
+    for state in (depth, color, scissor):
+        draw = replace_once(draw, state, '')
+    anchor = '  bool memexport_used = memexport_used_vertex || memexport_used_pixel;\n'
+    draw = replace_once(draw, anchor, anchor + '\n' + depth + color + scissor + f'''  {marker}
+  // Vertex exports and active guest queries can matter without color writes.
+  if (REXCVAR_GET(ch2k8_skip_invisible_draws) && !memexport_used &&
+      !active_occlusion_query_.valid &&
+      (!scissor.extent[0] || !scissor.extent[1] ||
+       (!normalized_color_mask && !normalized_depth_control.stencil_enable &&
+        !(normalized_depth_control.z_enable && normalized_depth_control.z_write_enable)))) {{
+    if (REXCVAR_GET(ch2k8_gpu_stats)) {{
+      static thread_local uint64_t skipped_draws = 0;
+      if ((++skipped_draws & 1023) == 1) {{
+        REXGPU_INFO("CH2K8 invisible draws skipped: {{}}", skipped_draws);
+      }}
+    }}
+    return true;
+  }}
+''')
+    return prefix + draw
 
 
 def patch_changed_usage(text):
@@ -279,8 +318,10 @@ def prepare_native_gpu(source):
         geometry_legacy=patch_sync(patch_backend_geometry_v1(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
         pre_wait_variants = ()
         if '/d3d12/' in relative:
+            pre_cull = patch_backend_float_pack(original, 'd3d12')
             pre_wait_variants = tuple(patch_sync_attribution(patch(original, 'd3d12'), 'd3d12')
                 for patch in (patch_backend_v5, patch_backend_full_write, patch_backend_geometry_v1))
+            pre_wait_variants += (pre_cull, patch_sync(pre_cull, 'd3d12'))
             pre_pack = patch_backend_before_float_pack(original, 'd3d12')
             pre_wait_variants += (pre_pack, patch_sync_attribution(pre_pack, 'd3d12'),
                                   patch_d3d12_waits_v1(patch_sync_attribution(pre_pack, 'd3d12')),
