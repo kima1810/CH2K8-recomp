@@ -242,7 +242,8 @@ def prepare_native_gpu(source):
         current = path.read_text(encoding='utf-8')
         previous = patch_backend_constants(original, 'd3d12') if '/d3d12/' in relative else expected
         preceding = patch_backend_v3(original, 'd3d12') if '/d3d12/' in relative else expected
-        from prepare_native_sync_sdk import patch_sync, patch_sync_v1, patch_sync_attribution
+        from prepare_native_sync_sdk import (patch_sync, patch_sync_v1, patch_sync_attribution,
+                                             patch_d3d12_waits_v1)
         with_sync = patch_sync(expected, 'common' if '/d3d12/' not in relative else 'd3d12') if '/vulkan/' not in relative else expected
         if ('/vulkan/' not in relative and current == patch_sync_attribution(expected,'common' if '/d3d12/' not in relative else 'd3d12')) or current == with_sync or ('/vulkan/' not in relative and current == patch_sync_v1(expected, 'common' if '/d3d12/' not in relative else 'd3d12')): expected = current
         published = patch_sync(patch_backend_v5(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
@@ -253,6 +254,8 @@ def prepare_native_gpu(source):
         if '/d3d12/' in relative:
             pre_wait_variants = tuple(patch_sync_attribution(patch(original, 'd3d12'), 'd3d12')
                 for patch in (patch_backend_v5, patch_backend_full_write, patch_backend_geometry_v1))
+            if current == patch_d3d12_waits_v1(patch_sync_attribution(expected, 'd3d12')):
+                expected = current
         if current not in (original, previous, preceding, published, legacy, geometry_legacy,
                            expected, *pre_wait_variants):
             raise ValueError('Unreviewed local GPU SDK changes: '+relative)

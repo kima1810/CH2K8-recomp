@@ -43,7 +43,7 @@ def patch_sync(text,kind):
     return replace_once(text,site,site+'  ch2k8::NativeGpuProgress().Notify();\n')
 
 
-def patch_d3d12_waits(text):
+def patch_d3d12_waits_v1(text):
     marker = '// CH2K8 reuse the already-recorded memexport copy.'
     if marker in text:
         return text
@@ -80,13 +80,87 @@ def patch_d3d12_waits(text):
               fence_value, fence_completion_event_))) {''')
 
 
+def patch_d3d12_waits(text):
+    text = patch_d3d12_waits_v1(text)
+    marker = '// CH2K8 retain readback buffers until their GPU writes complete.'
+    if marker in text:
+        return text
+    text = replace_once(text, '  const uint64_t readback_key =\n      MakeMemexportReadbackKey',
+        '''  // The cache key describes a single contiguous range. Multiple ranges
+  // can have the same first address and total size but different destinations.
+  if (memexport_ranges_.size() != 1) {
+    return IssueDraw_MemexportReadbackFullPath(total_size);
+  }
+  const uint64_t readback_key =
+      MakeMemexportReadbackKey''')
+    text = replace_once(text, '  CheckSubmissionFence(0);\n  bool previous_slot_ready =',
+        '''  // A cold slot goes directly to the synchronous fallback below.
+  if (readback.submission_written[read_index] > submission_completed_) {
+    CheckSubmissionFence(0);
+  }
+  bool previous_slot_ready =''')
+    text = replace_once(text,
+        '  ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(d3d12_readback_resolve));\n'
+        '  bool use_delayed_sync =',
+        '  rb.submission_written[write_index] = submission_current_;\n\n'
+        '  ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(d3d12_readback_resolve));\n'
+        '  bool use_delayed_sync =')
+    text = replace_once(text, '    if (rb.buffers[write_index]) {\n      if (rb.mapped_data[write_index]) {',
+        '''    if (rb.buffers[write_index]) {
+      const uint64_t previous_submission = rb.submission_written[write_index];
+      if (previous_submission > submission_completed_ &&
+          (!AwaitAllQueueOperationsCompletion() || previous_submission > submission_completed_)) {
+        buffer->Release();
+        return true;
+      }
+      if (rb.mapped_data[write_index]) {''')
+    text = replace_once(text, '    rb.buffers[write_index] = buffer;\n    rb.sizes[write_index] = size;',
+        '    rb.buffers[write_index] = buffer;\n    rb.sizes[write_index] = size;\n'
+        '    rb.submission_written[write_index] = 0;')
+    text = replace_once(text, '''  } else if (!AwaitAllQueueOperationsCompletion()) {
+    return true;
+  }
+
+  bool is_cache_miss = false;''', '''  }
+
+  if (use_delayed_sync && rb.submission_written[read_index] > submission_completed_) {
+    CheckSubmissionFence(0);
+  }
+  bool is_cache_miss = false;''')
+    text = replace_once(text, '''  if (use_delayed_sync && (!rb.buffers[read_index] || written_length > rb.sizes[read_index] ||
+                           !rb.mapped_data[read_index])) {
+    is_cache_miss = true;
+    read_index = write_index;
+    if (!AwaitAllQueueOperationsCompletion()) {
+      return true;
+    }
+  }''', '''  if (use_delayed_sync && (!rb.buffers[read_index] || written_length > rb.sizes[read_index] ||
+                           !rb.mapped_data[read_index] || !rb.submission_written[read_index] ||
+                           rb.submission_written[read_index] > submission_completed_)) {
+    is_cache_miss = true;
+    read_index = write_index;
+  }
+  if (read_index == write_index &&
+      (!AwaitAllQueueOperationsCompletion() ||
+       rb.submission_written[write_index] > submission_completed_)) {
+    return true;
+  }''')
+    return replace_once(text, '    if (!evict) {\n      ++it;',
+        f'''    {marker}
+    if (!evict || readback.submission_written[0] > submission_completed_ ||
+        readback.submission_written[1] > submission_completed_) {{
+      ++it;''')
+
+
 def prepare_sync(source):
     changes={}
     for relative,kind in [('src/graphics/command_processor.cpp','common'),('src/graphics/d3d12/command_processor.cpp','d3d12')]:
         original=subprocess.check_output(['git','-C',str(source),'show','HEAD:'+relative],text=True)
         previous=patch_common(original) if kind=='common' else patch_backend(original,kind)
         expected=patch_sync(previous,kind); path=source/relative
-        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),patch_sync_attribution(previous,kind),expected):
+        attributed = patch_sync_attribution(previous, kind)
+        prior_waits = patch_d3d12_waits_v1(attributed) if kind == 'd3d12' else expected
+        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,expected):
             raise ValueError('Unreviewed synchronization source: '+relative)
         changes[path]=expected
     for path,text in changes.items():

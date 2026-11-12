@@ -38,6 +38,55 @@ def execute(tmp_path, program):
     subprocess.run([str(binary)], check=True)
 
 
+def test_cache_pressure_keeps_readback_slots_until_gpu_completion(sdk_source, tmp_path):
+    source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('void D3D12CommandProcessor::EvictOldReadbackBuffers(')
+    body = source[start:source.index('\n}\n', start)+2]
+    execute(tmp_path, r'''
+#include <cassert>
+#include <cstdint>
+#include <unordered_map>
+struct Resource {
+  int releases = 0, unmaps = 0;
+  void Release() { ++releases; }
+  void Unmap(int, void*) { ++unmaps; }
+};
+struct ReadbackBuffer {
+  Resource* buffers[2]{};
+  void* mapped_data[2]{};
+  uint32_t sizes[2]{}, written_size[2]{};
+  uint64_t last_used_frame = 0, submission_written[2]{};
+};
+struct D3D12CommandProcessor {
+  static constexpr uint32_t kMaxReadbackBuffers = 1, kReadbackBufferEvictionAgeFrames = 10;
+  uint64_t frame_current_ = 5, submission_completed_ = 7;
+  void EvictOldReadbackBuffers(std::unordered_map<uint64_t, ReadbackBuffer>&);
+};
+'''+body+r'''
+int main() {
+  D3D12CommandProcessor processor;
+  Resource busy, complete;
+  std::unordered_map<uint64_t, ReadbackBuffer> buffers;
+  buffers[1].buffers[1] = &busy;
+  buffers[1].mapped_data[1] = &busy;
+  buffers[1].submission_written[1] = 8;
+  buffers[2].buffers[0] = &complete;
+  buffers[2].mapped_data[0] = &complete;
+  buffers[2].submission_written[0] = 7;
+  processor.EvictOldReadbackBuffers(buffers);
+  assert(buffers.size() == 1 && buffers.count(1));
+  assert(busy.releases == 0 && busy.unmaps == 0);
+  assert(complete.releases == 1 && complete.unmaps == 1);
+  processor.frame_current_ = 100;
+  processor.EvictOldReadbackBuffers(buffers);
+  assert(buffers.count(1) && busy.releases == 0);
+  processor.submission_completed_ = 8;
+  processor.EvictOldReadbackBuffers(buffers);
+  assert(buffers.empty() && busy.releases == 1 && busy.unmaps == 1);
+}
+''')
+
+
 def test_memexport_consumes_only_completed_copies(sdk_source, tmp_path):
     source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
     start = source.index('  uint32_t completed_index = read_index;')
@@ -92,6 +141,71 @@ int main() {
       const unsigned expected = i >= 4 && i < 8 ? i-3 : i >= 12 ? i-7 : 0;
       assert(result[i] == (mode >= 2 || !expected ? 0 : expected+(mode == 0 ? 10 : 0)));
     }
+  }
+}
+''')
+
+
+def test_memexport_cache_never_reuses_multi_range_layouts(sdk_source, tmp_path):
+    source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('  if (memexport_ranges_.size() != 1)')
+    end = source.index('  const uint64_t readback_key', start)
+    execute(tmp_path, r'''
+#include <cassert>
+#include <vector>
+bool UsesDelayedCopy(unsigned ranges) {
+  const std::vector<int> memexport_ranges_(ranges);
+  constexpr unsigned total_size = 12;
+  auto IssueDraw_MemexportReadbackFullPath = [](unsigned size) {
+    assert(size == 12);
+    return false;
+  };
+'''+source[start:end]+r'''
+  return true;
+}
+int main() {
+  assert(UsesDelayedCopy(1));
+  assert(!UsesDelayedCopy(2));
+  assert(!UsesDelayedCopy(3));
+}
+''')
+
+
+def test_delayed_resolve_uses_completed_slot_or_waits_for_current_copy(sdk_source, tmp_path):
+    source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('  uint32_t read_index = write_index;')
+    end = source.index('  bool should_copy =', start)
+    execute(tmp_path, r'''
+#include <cassert>
+#include <cstdint>
+int main() {
+  for (unsigned mode = 0; mode < 5; ++mode) {
+    struct {
+      unsigned sizes[2]{16,16};
+      bool buffers[2]{true,true}, mapped_data[2]{true,true};
+      uint64_t submission_written[2]{8,7};
+    } rb;
+    if (mode == 4) rb.submission_written[1] = 0;
+    uint64_t submission_completed_ = mode == 0 ? 7 : 6;
+    unsigned polls = 0, waits = 0, consumed = 2;
+    bool use_delayed_sync = mode != 2;
+    constexpr unsigned write_index = 0, written_length = 16;
+    auto CheckSubmissionFence = [&](int) { ++polls; };
+    auto AwaitAllQueueOperationsCompletion = [&] {
+      ++waits;
+      if (mode != 3) submission_completed_ = 8;
+      return true;
+    };
+    const auto run = [&]() -> bool {
+'''+source[start:end]+r'''
+      consumed = read_index;
+      assert(is_cache_miss == (use_delayed_sync && read_index == write_index));
+      return true;
+    };
+    assert(run());
+    assert(polls == (mode == 1 || mode == 3));
+    assert(waits == (mode != 0));
+    assert(consumed == (mode == 0 ? 1 : mode == 3 ? 2 : 0));
   }
 }
 ''')
