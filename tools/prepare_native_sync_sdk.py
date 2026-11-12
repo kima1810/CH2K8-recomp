@@ -261,7 +261,7 @@ bool D3D12CommandProcessor::CheckSubmissionFence(uint64_t await_submission) {
     ++submission_current_;''')
 
 
-def patch_d3d12_waits(text):
+def patch_d3d12_waits_v4(text):
     text = patch_d3d12_waits_v3(text)
     if '// CH2K8 right-size scratch allocations.' in text:
         return text
@@ -303,6 +303,34 @@ def patch_d3d12_waits(text):
     EvictOldReadbackBuffers(readback_buffers_);''')
 
 
+def patch_d3d12_waits(text):
+    text = patch_d3d12_waits_v4(text)
+    if '// CH2K8 trim render targets without stalling.' in text:
+        return text
+    text = replace_once(text, '  frame_current_ = 1;\n  frame_completed_ = 0;',
+        '  frame_current_ = 1;\n  frame_completed_ = 0;\n  next_render_target_trim_frame_ = 300;')
+    return replace_once(text, '''  if (is_opening_frame) {
+    // Update the completed frame index''', '''  if (is_opening_frame) {
+    // CH2K8 trim render targets without stalling. ClearCache preserves targets
+    // owning EDRAM data. No recorded or submitted commands may reference the
+    // targets it releases, including work issued directly on the queue.
+    if (!submission_open_ && !queue_operations_done_since_submission_signal_ &&
+        submission_completed_ == submission_current_ - 1 &&
+        frame_current_ >= next_render_target_trim_frame_) {
+      next_render_target_trim_frame_ = frame_current_ + 300;
+      const size_t before = render_target_cache_->GetCachedRenderTargetCount();
+      if (before >= 16) {
+        render_target_cache_->BeginFrame();
+        render_target_cache_->ClearCache();
+        const size_t after = render_target_cache_->GetCachedRenderTargetCount();
+        if (REXCVAR_GET(ch2k8_gpu_stats) && after < before) {
+          REXGPU_INFO("CH2K8 render-target cache trimmed: {} to {} entries", before, after);
+        }
+      }
+    }
+    // Update the completed frame index''')
+
+
 def patch_fence_header(text):
     text = replace_once(text, '  void CheckSubmissionFence(uint64_t await_submission);',
                         '  bool CheckSubmissionFence(uint64_t await_submission);')
@@ -318,6 +346,12 @@ def patch_scratch_header(text):
                         '  uint64_t scratch_buffer_last_submission_ = 0;')
 
 
+def patch_render_target_header(text):
+    return replace_once(text, '  virtual void ClearCache();',
+        '  virtual void ClearCache();\n'
+        '  size_t GetCachedRenderTargetCount() const { return render_targets_.size(); }')
+
+
 def prepare_sync(source):
     changes={}
     for relative,kind in [('src/graphics/command_processor.cpp','common'),('src/graphics/d3d12/command_processor.cpp','d3d12')]:
@@ -328,16 +362,26 @@ def prepare_sync(source):
         prior_waits = patch_d3d12_waits_v1(attributed) if kind == 'd3d12' else expected
         prior_readbacks = patch_d3d12_waits_v2(attributed) if kind == 'd3d12' else expected
         prior_fences = patch_d3d12_waits_v3(attributed) if kind == 'd3d12' else expected
-        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,prior_readbacks,prior_fences,expected):
+        prior_scratch = patch_d3d12_waits_v4(attributed) if kind == 'd3d12' else expected
+        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,prior_readbacks,prior_fences,prior_scratch,expected):
             raise ValueError('Unreviewed synchronization source: '+relative)
         changes[path]=expected
     relative = 'include/rex/graphics/d3d12/command_processor.h'
     original = subprocess.check_output(['git', '-C', str(source), 'show', 'HEAD:'+relative], text=True)
     path = source/relative
     prior_header = patch_fence_header(original)
-    expected = patch_scratch_header(prior_header)
-    if path.read_text(encoding='utf-8') not in (original, prior_header, expected):
+    prior_scratch_header = patch_scratch_header(prior_header)
+    expected = replace_once(prior_scratch_header, '  uint64_t frame_completed_ = 0;',
+        '  uint64_t frame_completed_ = 0;\n  uint64_t next_render_target_trim_frame_ = 300;')
+    if path.read_text(encoding='utf-8') not in (original, prior_header, prior_scratch_header, expected):
         raise ValueError('Unreviewed synchronization source: '+relative)
+    changes[path] = expected
+    relative = 'include/rex/graphics/pipeline/render_target/cache.h'
+    original = subprocess.check_output(['git', '-C', str(source), 'show', 'HEAD:'+relative], text=True)
+    path = source/relative
+    expected = patch_render_target_header(original)
+    if path.read_text(encoding='utf-8') not in (original, expected):
+        raise ValueError('Unreviewed render-target cache header: '+relative)
     changes[path] = expected
     for path,text in changes.items():
         if path.read_text(encoding='utf-8')!=text:path.write_text(text,encoding='utf-8',newline='\n')

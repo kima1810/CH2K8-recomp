@@ -131,6 +131,42 @@ int main() {
 ''')
 
 
+def test_render_target_trim_runs_only_at_an_idle_frame_boundary(sdk_source, tmp_path):
+    source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('    // CH2K8 trim render targets without stalling.')
+    end = source.index('    // Update the completed frame index', start)
+    execute(tmp_path, r'''
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#define REXCVAR_GET(...) false
+#define REXGPU_INFO(...) ((void)0)
+int main() {
+  for (unsigned mode = 0; mode < 6; ++mode) {
+    struct Cache {
+      size_t count = 16;
+      bool reset_bindings = false;
+      unsigned trims = 0;
+      size_t GetCachedRenderTargetCount() {return count;}
+      void BeginFrame() {reset_bindings = true;}
+      void ClearCache() {assert(reset_bindings); ++trims; count = 4;}
+    } cache;
+    if (mode == 5) cache.count = 15;
+    auto* render_target_cache_ = &cache;
+    const bool submission_open_ = mode == 1;
+    const bool queue_operations_done_since_submission_signal_ = mode == 2;
+    const uint64_t submission_current_ = 8;
+    const uint64_t submission_completed_ = mode == 3 ? 6 : 7;
+    const uint64_t frame_current_ = mode == 4 ? 299 : 300;
+    uint64_t next_render_target_trim_frame_ = 300;
+'''+source[start:end]+r'''
+    assert(cache.trims == (mode == 0));
+    assert(next_render_target_trim_frame_ == (mode == 0 || mode == 5 ? 600 : 300));
+  }
+}
+''')
+
+
 def test_storage_writer_runs_pending_flush_before_waiting(sdk_source, tmp_path):
     source = patch_pipeline(original(sdk_source, 'pipeline_cache'))
     start = source.index('      if (!shader && !write_pipeline')
