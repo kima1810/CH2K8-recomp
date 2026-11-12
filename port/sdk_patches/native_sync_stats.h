@@ -5,7 +5,9 @@
 #include <chrono>
 REXCVAR_DECLARE(bool, ch2k8_gpu_stats);
 namespace rex::graphics::ch2k8 {
-enum class SyncKind { RingIdle, RegisterWait, SubmissionFence, PipelineWait, Count };
+enum class SyncKind {
+  RingIdle, RegisterWait, SubmissionFence, PipelineWait, PipelineCreation, MemexportFallback, Count
+};
 struct SyncStats { uint64_t calls=0, ns=0, maximum=0; std::chrono::steady_clock::time_point origin=std::chrono::steady_clock::now(); };
 class SyncScope {
   using Clock = std::chrono::steady_clock;
@@ -22,7 +24,8 @@ public:
     auto &s=stats_[size_t(kind_)]; ++s.calls; s.ns+=ns; if(ns>s.maximum) s.maximum=ns;
     auto window=std::chrono::duration<double>(now-s.origin).count();
     if(window<1.0) return;
-    constexpr const char* names[]={"ring_idle","register_wait","submission_fence","pipeline_wait"};
+    constexpr const char* names[]={"ring_idle","register_wait","submission_fence","pipeline_wait",
+                                   "pipeline_creation", "memexport_fallback"};
     REXLOG_INFO("CH2K8 sync kind={} calls={} wall_ms={} max_ms={} window_ms={}",
       names[size_t(kind_)],s.calls,double(s.ns)/1e6,double(s.maximum)/1e6,window*1000);
     s=SyncStats{};
