@@ -716,3 +716,44 @@ int main() {
   assert(armed == 3 && waits == 2 && slept == 8);
 }
 ''')
+
+
+def test_shader_translation_fast_path_survives_variant_removal(sdk_source, tmp_path):
+    from prepare_native_shader_sdk import patch_translation_cache
+
+    source = subprocess.check_output([
+        'git', '-C', str(sdk_source), 'show', 'HEAD:src/graphics/pipeline/shader/shader.cpp',
+    ], text=True)
+    source = patch_translation_cache(source)
+    start = source.index('Shader::Translation* Shader::GetOrCreateTranslation(')
+    end = source.index('std::pair<std::filesystem::path', start)
+    execute(tmp_path, r'''
+#include <cassert>
+#include <cstdint>
+#include <unordered_map>
+struct Shader {
+  struct Translation {
+    uint64_t key;
+    uint64_t modification() const { return key; }
+  };
+  Translation* CreateTranslationInstance(uint64_t key) { return new Translation{key}; }
+  Translation* GetOrCreateTranslation(uint64_t key, bool* is_new);
+  void DestroyTranslation(uint64_t key);
+  std::unordered_map<uint64_t, Translation*> translations_;
+  Translation* last_translation_ = nullptr;
+};
+'''+source[start:end]+r'''
+int main() {
+  Shader shader;
+  bool created = false;
+  auto* first = shader.GetOrCreateTranslation(0, &created);
+  assert(created && first->modification() == 0);
+  assert(shader.GetOrCreateTranslation(0, &created) == first && !created);
+  assert(shader.GetOrCreateTranslation(2, &created)->modification() == 2 && created);
+  shader.DestroyTranslation(0);
+  assert(shader.GetOrCreateTranslation(2, &created)->modification() == 2 && !created);
+  shader.DestroyTranslation(2);
+  assert(shader.GetOrCreateTranslation(2, &created)->modification() == 2 && created);
+  shader.DestroyTranslation(2);
+}
+''')

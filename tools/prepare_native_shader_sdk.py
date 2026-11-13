@@ -360,8 +360,36 @@ def patch_shader(text):
     return text[:start]+native+original+'  }\n\n'+text[end:]
 
 
+def patch_translation_cache_header(text):
+    return replace_once(text, '  std::unordered_map<uint64_t, Translation*> translations_;',
+        '  std::unordered_map<uint64_t, Translation*> translations_;\n'
+        '  Translation* last_translation_ = nullptr;')
+
+
+def patch_translation_cache(text):
+    text = replace_once(text, '''Shader::Translation* Shader::GetOrCreateTranslation(uint64_t modification, bool* is_new) {
+  auto it''', '''Shader::Translation* Shader::GetOrCreateTranslation(uint64_t modification, bool* is_new) {
+  // Successive draws often reuse the same variant of this shader.
+  if (last_translation_ && last_translation_->modification() == modification) {
+    if (is_new) {
+      *is_new = false;
+    }
+    return last_translation_;
+  }
+  auto it''')
+    text = replace_once(text, '    return it->second;\n  }\n  Translation* translation',
+        '    last_translation_ = it->second;\n    return last_translation_;\n  }\n  Translation* translation')
+    text = replace_once(text, '  translations_.emplace(modification, translation);',
+        '  translations_.emplace(modification, translation);\n  last_translation_ = translation;')
+    return replace_once(text, '  delete it->second;\n  translations_.erase(it);',
+        '  if (last_translation_ == it->second) {\n    last_translation_ = nullptr;\n  }\n'
+        '  delete it->second;\n  translations_.erase(it);')
+
+
 def prepare_native_shaders(source):
     functions = {
+        'include/rex/graphics/pipeline/shader/shader.h': patch_translation_cache_header,
+        'src/graphics/pipeline/shader/shader.cpp': patch_translation_cache,
         'include/rex/graphics/pipeline/shader/dxbc_translator.h': patch_header,
         'src/graphics/d3d12/pipeline_cache.cpp': patch_pipeline,
         'src/graphics/pipeline/shader/dxbc_translator_om.cpp': patch_output,
@@ -410,7 +438,10 @@ def prepare_native_shaders(source):
         previous = patch_pipeline_native_vertex(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
         parallel = patch_pipeline_parallel(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
         geometry_initial=previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, true,','REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false,').replace('Specialize vertex byte order, index conversion and read-only memory binding','Specialize common vertex stream byte order per draw')
-        if path.read_text() not in (original, preceding[relative](original), version4[relative](original), version5[relative](original), initial_v6[relative](original), version7[relative](original), version8[relative](original), intermediate, geometry_initial, previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), previous, parallel, expected):
+        older = (version[relative](original) for version in
+                 (preceding, version4, version5, initial_v6, version7, version8)
+                 if relative in version)
+        if path.read_text() not in (original, *older, intermediate, geometry_initial, previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), previous, parallel, expected):
             raise ValueError('Unreviewed shader SDK changes: '+relative)
         changes[path] = expected
     for path, expected in changes.items():
