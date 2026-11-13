@@ -659,3 +659,60 @@ int main() {
   assert((result == std::vector<Range>{{10, 8}, {50, 3}}));
 }
 ''')
+
+
+def test_short_gpu_waits_fall_back_on_timer_failure(sdk_source, tmp_path):
+    from prepare_native_gpu_sdk import patch_common
+
+    original_source = subprocess.check_output([
+        'git', '-C', str(sdk_source), 'show', 'HEAD:src/graphics/command_processor.cpp',
+    ], text=True)
+    source = patch_sync(patch_common(original_source), 'common')
+    start = source.index('void SleepForGpuPacket(')
+    end = source.index('}  // namespace', start)
+    execute(tmp_path, r'''
+#include <cassert>
+#include <chrono>
+#include <cstdint>
+#define REXCVAR_GET(flag) enabled
+using HANDLE = void*;
+struct LARGE_INTEGER { int64_t QuadPart; };
+constexpr unsigned CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 2, TIMER_MODIFY_STATE = 2,
+                   SYNCHRONIZE = 0x100000, FALSE = 0, WAIT_OBJECT_0 = 0;
+unsigned armed = 0, slept = 0, waits = 0;
+bool enabled = true, arm_success = true, wait_success = true;
+int handle;
+HANDLE CreateWaitableTimerExW(void*, void*, unsigned, unsigned) {return &handle;}
+void CloseHandle(HANDLE) {}
+bool SetWaitableTimer(HANDLE, LARGE_INTEGER* due, unsigned, void*, void*, unsigned) {
+  assert(due->QuadPart == -10000);
+  ++armed;
+  return arm_success;
+}
+unsigned WaitForSingleObject(HANDLE, unsigned timeout) {
+  assert(timeout == 16);
+  ++waits;
+  return wait_success ? WAIT_OBJECT_0 : 258;
+}
+namespace rex::thread {
+void Sleep(std::chrono::milliseconds duration) {slept += unsigned(duration.count());}
+}
+'''+source[start:end]+r'''
+int main() {
+  SleepForGpuPacket(1);
+  assert(armed == 1 && waits == 1 && slept == 0);
+  SleepForGpuPacket(5);
+  assert(armed == 1 && slept == 5);
+  enabled = false;
+  SleepForGpuPacket(1);
+  assert(armed == 1 && slept == 6);
+  enabled = true;
+  arm_success = false;
+  SleepForGpuPacket(1);
+  assert(armed == 2 && waits == 1 && slept == 7);
+  arm_success = true;
+  wait_success = false;
+  SleepForGpuPacket(1);
+  assert(armed == 3 && waits == 2 && slept == 8);
+}
+''')

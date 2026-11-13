@@ -30,7 +30,7 @@ def patch_sync_attribution(text, kind):
     return text[:start]+part+text[end:]
 
 
-def patch_sync(text,kind):
+def patch_sync_progress(text,kind):
     text=patch_sync_attribution(text,kind)
     if kind == 'd3d12':
         return patch_d3d12_waits(text)
@@ -41,6 +41,78 @@ def patch_sync(text,kind):
     text=replace_once(text,site,site+'      ch2k8::NativeGpuProgress().Notify();\n')
     site='  memory::store(memory_->TranslatePhysical(address), data_value);\n'
     return replace_once(text,site,site+'  ch2k8::NativeGpuProgress().Notify();\n')
+
+
+def patch_sync(text, kind):
+    text = patch_sync_progress(text, kind)
+    marker = '// CH2K8 precise GPU packet waits.'
+    if kind != 'common' or marker in text:
+        return text
+    text = replace_once(text, 'REXCVAR_DEFINE_BOOL(vsync,', f'''{marker}
+#if REX_PLATFORM_WIN32
+#include <Windows.h>
+
+REXCVAR_DEFINE_BOOL(ch2k8_precise_packet_waits, false, "GPU/CH2K8",
+                    "Use a high-resolution timer for short GPU packet waits")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+namespace {{
+void SleepForGpuPacket(uint32_t milliseconds) {{
+  if (milliseconds <= 4 && REXCVAR_GET(ch2k8_precise_packet_waits)) {{
+    struct ThreadTimer {{
+      HANDLE handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+                                             TIMER_MODIFY_STATE | SYNCHRONIZE);
+      ~ThreadTimer() {{
+        if (handle) CloseHandle(handle);
+      }}
+    }};
+    thread_local ThreadTimer timer;
+    LARGE_INTEGER due_time;
+    due_time.QuadPart = -int64_t(milliseconds) * 10000;
+    if (timer.handle && SetWaitableTimer(timer.handle, &due_time, 0, nullptr, nullptr, FALSE) &&
+        WaitForSingleObject(timer.handle, 16) == WAIT_OBJECT_0) {{
+      return;
+    }}
+  }}
+  rex::thread::Sleep(std::chrono::milliseconds(milliseconds));
+}}
+}}  // namespace
+#endif
+
+REXCVAR_DEFINE_BOOL(vsync,''')
+    start = text.index('bool CommandProcessor::ExecutePacketType3_WAIT_REG_MEM(')
+    end = text.index('\n}\n', start)
+    wait = text[start:end]
+    wait = replace_once(wait, '  bool matched = false;', '''  // The physical mapping is stable for the lifetime of the packet. Reload its
+  // contents on each poll because the guest can update them on another thread.
+  const volatile uint32_t* poll_memory = is_memory
+      ? reinterpret_cast<const volatile uint32_t*>(
+            memory_->TranslatePhysical(poll_reg_addr & ~uint32_t(0x3)))
+      : nullptr;
+  bool matched = false;''')
+    wait = replace_once(wait, '''      value =
+          *reinterpret_cast<uint32_t*>(memory_->TranslatePhysical(poll_reg_addr & ~uint32_t(0x3)));''',
+        '      value = *poll_memory;')
+    wait = replace_once(wait, '          rex::thread::Sleep(std::chrono::milliseconds(wait / 0x100));', '''#if REX_PLATFORM_WIN32
+          SleepForGpuPacket(wait / 0x100);
+#else
+          rex::thread::Sleep(std::chrono::milliseconds(wait / 0x100));
+#endif''')
+    wait = replace_once(wait, '''
+        if (!worker_running_) {
+          // Short-circuited exit.
+          return false;
+        }
+      } else {
+        rex::thread::MaybeYield();
+      }''', '''
+      } else {
+        rex::thread::MaybeYield();
+      }
+      if (!worker_running_) {
+        return false;
+      }''')
+    return text[:start] + wait + text[end:]
 
 
 def patch_d3d12_waits_v1(text):
@@ -363,7 +435,7 @@ def prepare_sync(source):
         prior_readbacks = patch_d3d12_waits_v2(attributed) if kind == 'd3d12' else expected
         prior_fences = patch_d3d12_waits_v3(attributed) if kind == 'd3d12' else expected
         prior_scratch = patch_d3d12_waits_v4(attributed) if kind == 'd3d12' else expected
-        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,prior_readbacks,prior_fences,prior_scratch,expected):
+        if path.read_text(encoding='utf-8') not in (previous,patch_sync_v1(previous,kind),attributed,prior_waits,prior_readbacks,prior_fences,prior_scratch,patch_sync_progress(previous,kind),expected):
             raise ValueError('Unreviewed synchronization source: '+relative)
         changes[path]=expected
     relative = 'include/rex/graphics/d3d12/command_processor.h'

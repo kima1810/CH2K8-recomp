@@ -372,7 +372,7 @@ def prepare_native_gpu(source):
         current = path.read_text(encoding='utf-8')
         previous = patch_backend_constants(original, 'd3d12') if '/d3d12/' in relative else expected
         preceding = patch_backend_v3(original, 'd3d12') if '/d3d12/' in relative else expected
-        from prepare_native_sync_sdk import (patch_sync, patch_sync_v1, patch_sync_attribution,
+        from prepare_native_sync_sdk import (patch_sync, patch_sync_progress, patch_sync_v1, patch_sync_attribution,
                                              patch_d3d12_waits_v1, patch_d3d12_waits_v2,
                                              patch_d3d12_waits_v3, patch_d3d12_waits_v4)
         with_sync = patch_sync(expected, 'common' if '/d3d12/' not in relative else 'd3d12') if '/vulkan/' not in relative else expected
@@ -382,6 +382,8 @@ def prepare_native_gpu(source):
         legacy=patch_sync(patch_backend_full_write(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
         geometry_legacy=patch_sync(patch_backend_geometry_v1(original,'d3d12'),'d3d12') if '/d3d12/' in relative else expected
         pre_wait_variants = ()
+        if '/d3d12/' not in relative and '/vulkan/' not in relative:
+            pre_wait_variants = (patch_sync_progress(expected, 'common'),)
         if '/d3d12/' in relative:
             pre_cull = patch_backend_float_pack(original, 'd3d12')
             pre_wait_variants = tuple(patch_sync_attribution(patch(original, 'd3d12'), 'd3d12')
