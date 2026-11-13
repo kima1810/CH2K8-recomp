@@ -576,3 +576,86 @@ int main() {
   assert(processed == 3);
 }
 ''')
+
+
+def test_fetch_packets_preserve_unchanged_texture_and_vertex_slots(sdk_source, tmp_path):
+    from prepare_native_gpu_sdk import patch_backend
+
+    source = patch_backend(original(sdk_source, 'command_processor'), 'd3d12')
+    start = source.index('    if (REXCVAR_GET(ch2k8_native_constants)) {\n'
+                         '      // Only invalidate fetch slots')
+    end = source.index('    memory::copy_and_swap(', start)
+    execute(tmp_path, r'''
+#include <bit>
+#include <cassert>
+#include <cstdint>
+#define REXCVAR_GET(flag) true
+namespace rex { using std::byteswap; uint32_t byte_swap(uint32_t value) {return byteswap(value);} }
+int main() {
+  constexpr uint32_t XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 = 1;
+  struct { uint32_t values[193]{}; } registers;
+  auto* register_file_ = &registers;
+  constexpr uint32_t start_index = 121, num_registers = 24;
+  uint32_t base[num_registers]{};
+  struct { bool up_to_date = true; } cbuffer_binding_fetch_;
+  struct Cache {
+    uint32_t invalidated = 0;
+    void InvalidateTextureFetchMask(uint32_t mask) {invalidated |= mask;}
+  } cache;
+  auto* texture_cache_ = &cache;
+  uint64_t vertex_buffers_in_sync_[2]{UINT64_MAX, UINT64_MAX};
+  auto write = [&] {
+'''+source[start:end]+r'''
+    assert(false);
+  };
+  write();
+  assert(cbuffer_binding_fetch_.up_to_date && !cache.invalidated);
+  base[1] = rex::byte_swap(0x12345678u);
+  base[8] = rex::byte_swap(0x87654321u);
+  write();
+  assert(!cbuffer_binding_fetch_.up_to_date);
+  assert(cache.invalidated == ((1u << 20) | (1u << 21)));
+  assert(vertex_buffers_in_sync_[0] == ~(uint64_t(1) << 60));
+  assert(vertex_buffers_in_sync_[1] == ~uint64_t(1));
+  assert(registers.values[122] == 0x12345678u && registers.values[129] == 0x87654321u);
+}
+''')
+
+
+def test_shared_memory_fast_path_keeps_range_validation_and_merging(sdk_source, tmp_path):
+    from prepare_native_assets_sdk import patch_shared_memory_requests
+
+    source = subprocess.check_output([
+        'git', '-C', str(sdk_source), 'show', 'HEAD:src/graphics/shared_memory.cpp',
+    ], text=True)
+    source = patch_shared_memory_requests(source)
+    start = source.index('  // CH2K8 keep single-range requests off the heap.')
+    end = source.index('  SCOPE_profile_cpu_f("gpu");', start)
+    execute(tmp_path, r'''
+#include <algorithm>
+#include <cassert>
+#include <cstdint>
+#include <span>
+#include <utility>
+#include <vector>
+int main() {
+  constexpr uint32_t kBufferSize = 1024;
+  using Range = std::pair<uint32_t, uint32_t>;
+  std::vector<Range> result;
+  auto run = [&](std::span<const Range> input) {
+    const auto* ranges = input.data();
+    auto count = input.size();
+'''+source[start:end]+r'''
+    assert(count != 1 || merged_ranges.data() == ranges);
+    result.assign(merged_ranges.begin(), merged_ranges.end());
+    return true;
+  };
+  assert(run(std::vector<Range>{{1025, 0}}) && result.empty());
+  assert(!run(std::vector<Range>{{1025, 1}}));
+  assert(!run(std::vector<Range>{{1023, 2}}));
+  assert(run(std::vector<Range>{{1023, 1}}));
+  assert((result == std::vector<Range>{{1023, 1}}));
+  assert(run(std::vector<Range>{{12, 4}, {50, 3}, {10, 4}, {16, 2}}));
+  assert((result == std::vector<Range>{{10, 8}, {50, 3}}));
+}
+''')

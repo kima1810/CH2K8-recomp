@@ -14,7 +14,8 @@ def test_pinned_native_asset_patch_is_complete_and_idempotent(tmp_path):
     if not (source/'.git').exists():pytest.skip('Requires local pinned source SDK')
     files=['include/rex/graphics/shared_memory.h','include/rex/graphics/d3d12/texture_cache.h',
            'src/graphics/d3d12/texture_cache.cpp','src/filesystem/devices/host_path_device.cpp',
-           'src/graphics/pipeline/texture/cache.cpp']
+           'src/graphics/pipeline/texture/cache.cpp','include/rex/graphics/pipeline/texture/cache.h',
+           'src/graphics/shared_memory.cpp']
     for name in files:
         path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(subprocess.check_output(['git','-C',str(source),'show','HEAD:'+name]))
@@ -39,7 +40,8 @@ def test_native_dds_payload_release_and_fenced_retirement(tmp_path):
     if not (sdk/'.git').exists():pytest.skip('Requires pinned SDK')
     for name in ['include/rex/graphics/shared_memory.h','include/rex/graphics/d3d12/texture_cache.h',
                  'src/graphics/d3d12/texture_cache.cpp','src/filesystem/devices/host_path_device.cpp',
-                 'src/graphics/pipeline/texture/cache.cpp']:
+                 'src/graphics/pipeline/texture/cache.cpp','include/rex/graphics/pipeline/texture/cache.h',
+                 'src/graphics/shared_memory.cpp']:
         path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(subprocess.check_output(['git','-C',str(sdk),'show','HEAD:'+name]))
     prepare_native_assets(tmp_path)

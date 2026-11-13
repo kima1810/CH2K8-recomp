@@ -161,7 +161,7 @@ def patch_backend_float_pack(text, backend):
     return text
 
 
-def patch_backend(text, backend):
+def patch_backend_draw_cull(text, backend):
     text = patch_backend_float_pack(text, backend)
     marker = '// CH2K8 discard draws without visible effects.'
     if backend != 'd3d12' or marker in text:
@@ -198,6 +198,71 @@ REXCVAR_DEFINE_BOOL(d3d12_readback_memexport,''')
   }}
 ''')
     return prefix + draw
+
+
+def patch_backend(text, backend):
+    text = patch_backend_draw_cull(text, backend)
+    marker = '// CH2K8 filter resident vertex fetches before iteration.'
+    if backend != 'd3d12' or marker in text:
+        return text
+    text = replace_once(text, '''  for (uint32_t vfetch_index = first_vfetch; vfetch_index <= last_vfetch; ++vfetch_index) {
+    InvalidateVertexBufferResidency(vfetch_index);
+  }''', '''  const uint32_t first_word = first_vfetch >> 6;
+  const uint32_t last_word = last_vfetch >> 6;
+  const uint64_t first_mask = UINT64_MAX << (first_vfetch & 63);
+  const uint64_t last_mask = UINT64_MAX >> (63 - (last_vfetch & 63));
+  if (first_word == last_word) {
+    vertex_buffers_in_sync_[first_word] &= ~(first_mask & last_mask);
+  } else {
+    vertex_buffers_in_sync_[first_word] &= ~first_mask;
+    vertex_buffers_in_sync_[last_word] &= ~last_mask;
+  }''')
+    text = replace_once(text, '    uint32_t vfetch_bits_remaining = constant_map_vertex.vertex_fetch_bitmap[i];',
+        f'    {marker}\n'
+        '    const uint32_t resident = uint32_t(vertex_buffers_in_sync_[i >> 1] >> ((i & 1) * 32));\n'
+        '    uint32_t vfetch_bits_remaining = constant_map_vertex.vertex_fetch_bitmap[i] & ~resident;')
+    text = replace_once(text, '''      if (vertex_buffers_in_sync_[vfetch_index >> 6] & vfetch_bit) {
+        continue;
+      }
+''', '')
+    text = replace_once(text, '''  CommandProcessor::WriteRegister(index, value);
+
+  if (index >= XE_GPU_REG_SHADER_CONSTANT_000_X''', '''  if (REXCVAR_GET(ch2k8_native_constants) && index >= XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 &&
+      index <= XE_GPU_REG_SHADER_CONSTANT_FETCH_31_5 && register_file_->values[index] == value) {
+    return;
+  }
+  CommandProcessor::WriteRegister(index, value);
+
+  if (index >= XE_GPU_REG_SHADER_CONSTANT_000_X''')
+    return replace_once(text, '''      end_index <= XE_GPU_REG_SHADER_CONSTANT_FETCH_31_5) {
+    memory::copy_and_swap(register_file_->values + start_index, base, num_registers);''', '''      end_index <= XE_GPU_REG_SHADER_CONSTANT_FETCH_31_5) {
+    if (REXCVAR_GET(ch2k8_native_constants)) {
+      // Only invalidate fetch slots actually changed by the packet.
+      uint32_t* destination = register_file_->values + start_index;
+      uint32_t texture_mask = 0;
+      uint64_t vertex_masks[2] = {};
+      for (uint32_t i = 0; i < num_registers; ++i) {
+        const uint32_t value = rex::byte_swap(base[i]);
+        if (destination[i] == value) {
+          continue;
+        }
+        destination[i] = value;
+        const uint32_t fetch_dword = start_index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + i;
+        texture_mask |= uint32_t(1) << (fetch_dword / 6);
+        const uint32_t vertex_slot = fetch_dword / 2;
+        vertex_masks[vertex_slot >> 6] |= uint64_t(1) << (vertex_slot & 63);
+      }
+      if (texture_mask) {
+        cbuffer_binding_fetch_.up_to_date = false;
+        if (texture_cache_) {
+          texture_cache_->InvalidateTextureFetchMask(texture_mask);
+        }
+        vertex_buffers_in_sync_[0] &= ~vertex_masks[0];
+        vertex_buffers_in_sync_[1] &= ~vertex_masks[1];
+      }
+      return;
+    }
+    memory::copy_and_swap(register_file_->values + start_index, base, num_registers);''')
 
 
 def patch_changed_usage(text):
@@ -321,7 +386,9 @@ def prepare_native_gpu(source):
             pre_cull = patch_backend_float_pack(original, 'd3d12')
             pre_wait_variants = tuple(patch_sync_attribution(patch(original, 'd3d12'), 'd3d12')
                 for patch in (patch_backend_v5, patch_backend_full_write, patch_backend_geometry_v1))
-            pre_wait_variants += (pre_cull, patch_sync(pre_cull, 'd3d12'))
+            pre_fetch = patch_backend_draw_cull(original, 'd3d12')
+            pre_wait_variants += (pre_cull, patch_sync(pre_cull, 'd3d12'),
+                                  pre_fetch, patch_sync(pre_fetch, 'd3d12'))
             pre_pack = patch_backend_before_float_pack(original, 'd3d12')
             pre_wait_variants += (pre_pack, patch_sync_attribution(pre_pack, 'd3d12'),
                                   patch_d3d12_waits_v1(patch_sync_attribution(pre_pack, 'd3d12')),

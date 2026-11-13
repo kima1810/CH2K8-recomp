@@ -178,6 +178,77 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
     updated = patch_texture_requests(original)
     if updated != original:
         common_cache.write_text(updated, encoding='utf-8', newline='\n')
+    common_header = source/'include/rex/graphics/pipeline/texture/cache.h'
+    text = common_header.read_text(encoding='utf-8')
+    if 'void InvalidateTextureFetchMask(' not in text:
+        text = once(text, '    texture_bindings_in_sync_ &= ~mask;\n  }',
+            '    InvalidateTextureFetchMask(mask);\n  }\n\n'
+            '  void InvalidateTextureFetchMask(uint32_t mask) { texture_bindings_in_sync_ &= ~mask; }')
+        common_header.write_text(text, encoding='utf-8', newline='\n')
+    text = cpp.read_text(encoding='utf-8')
+    marker = '// CH2K8 visit each texture binding once per draw.'
+    if marker not in text:
+        start = text.index('  // Pre-create 3D-as-2D wrappers before draw setup.')
+        end = text.index('  // Transition the textures to the needed usage', start)
+        text = text[:start] + f'  {marker}\n' + text[end:]
+        anchor = '    D3D12Texture* binding_texture = static_cast<D3D12Texture*>(binding->texture);'
+        start = text.index(anchor, start)
+        text = text[:start] + '''    if (binding->key.dimension == xenos::DataDimension::k3D &&
+        REXCVAR_GET(gpu_3d_to_2d_texture)) {
+      constexpr auto shader_resource = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
+                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+      if (binding->texture) {
+        static_cast<D3D12Texture*>(binding->texture)->GetOrCreate3DAs2DResource(shader_resource);
+      }
+      if (binding->texture_signed) {
+        static_cast<D3D12Texture*>(binding->texture_signed)->GetOrCreate3DAs2DResource(shader_resource);
+      }
+    }
+''' + text[start:]
+        cpp.write_text(text, encoding='utf-8', newline='\n')
+
+    shared_cpp = source/'src/graphics/shared_memory.cpp'
+    text = shared_cpp.read_text(encoding='utf-8')
+    updated = patch_shared_memory_requests(text)
+    if updated != text:
+        shared_cpp.write_text(updated, encoding='utf-8', newline='\n')
+
+
+def patch_shared_memory_requests(text):
+    marker = '// CH2K8 keep single-range requests off the heap.'
+    if marker in text:
+        return text
+    start = text.index('  // Some texture or buffer is empty, for example - safe to draw in this case.')
+    end = text.index('  for (const std::pair<uint32_t, uint32_t>& range : merged_ranges)', start)
+    block = text[start:end]
+    block = once(block, '  SCOPE_profile_cpu_f("gpu");\n\n', '')
+    block = once(block, '  std::vector<std::pair<uint32_t, uint32_t>> merged_ranges;\n', '')
+    block = block.replace('merged_ranges', 'range_storage')
+    block = '\n'.join('  ' + line if line else '' for line in block.rstrip().splitlines())
+    text = once(text, '#include <rex/graphics/shared_memory.h>',
+        '#include <rex/graphics/shared_memory.h>\n\n#include <span>')
+    start = text.index('  // Some texture or buffer is empty, for example - safe to draw in this case.')
+    end = text.index('  for (const std::pair<uint32_t, uint32_t>& range : merged_ranges)', start)
+    return text[:start] + f'''  {marker}
+  std::vector<std::pair<uint32_t, uint32_t>> range_storage;
+  std::span<const std::pair<uint32_t, uint32_t>> merged_ranges;
+  if (count == 1) {{
+    const auto [start, length] = ranges[0];
+    if (!length) {{
+      return true;
+    }}
+    if (start > kBufferSize || (kBufferSize - start) < length) {{
+      return false;
+    }}
+    merged_ranges = {{ranges, 1}};
+  }} else {{
+{block}
+    merged_ranges = range_storage;
+  }}
+
+  SCOPE_profile_cpu_f("gpu");
+
+''' + text[end:]
 
 
 def patch_texture_requests(text):
