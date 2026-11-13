@@ -117,7 +117,8 @@ bool D3D12TextureCache::LoadTextureDataFromResidentMemoryImpl(''')
     key.key = binding->key;''')
         text=once(text,'  uint32_t mip_levels = texture_key.mip_max_level + 1;','  uint32_t mip_levels = texture.native_dds_ ? texture.native_dds_->mips : texture_key.mip_max_level + 1;')
         cpp.write_text(text,encoding='utf-8',newline='\n')
-    if '// CH2K8 native DDS retirement pump v1' not in text:
+    if ('// CH2K8 native DDS retirement pump v1' not in text and
+            '// CH2K8 retire DDS resources when the fence advances.' not in text):
         header_text=header.read_text(encoding='utf-8')
         header_text=once(header_text,'  bool TryLoadNativeDDS(D3D12Texture& texture);','''  // CH2K8 native DDS retirement pump v1
   std::unordered_set<D3D12Texture*> native_pending_retirements_;
@@ -146,6 +147,58 @@ bool D3D12TextureCache::LoadTextureDataFromResidentMemoryImpl(''')
     for (auto descriptor : retired.descriptors) d3d12_texture_cache.ReleaseTextureDescriptor(descriptor);
   for (auto descriptor : native_retired_descriptors_) d3d12_texture_cache.ReleaseTextureDescriptor(descriptor);''')
         cpp.write_text(text,encoding='utf-8',newline='\n')
+    if '// CH2K8 retire DDS resources when the fence advances.' not in text:
+        header_text = header.read_text(encoding='utf-8')
+        header_text = once(header_text, '  void ClearCache() override;',
+            '  void ClearCache() override;\n'
+            '  void CompletedSubmissionUpdated(uint64_t completed_submission_index) override;')
+        start = text.index('void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {')
+        end = text.index('#if XE_GPU_FINE_GRAINED_DRAW_SCOPES', start)
+        text = text[:start] + '''void D3D12TextureCache::CompletedSubmissionUpdated(uint64_t completed_submission_index) {
+  // CH2K8 retire DDS resources when the fence advances.
+  std::erase_if(native_uploads_, [completed_submission_index](const auto& upload) {
+    return upload.first <= completed_submission_index;
+  });
+  std::erase_if(native_pending_retirements_, [&](D3D12Texture* texture) {
+    texture->CollectNativeRetired(*this, completed_submission_index);
+    return texture->native_retired_resources_.empty();
+  });
+  TextureCache::CompletedSubmissionUpdated(completed_submission_index);
+}
+
+void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
+''' + text[end:]
+        header.write_text(header_text, encoding='utf-8', newline='\n')
+        cpp.write_text(text, encoding='utf-8', newline='\n')
     (source/'include/rex/graphics/native_dds.h').write_bytes((ROOT/'port/src/native_dds.h').read_bytes())
     (source/'include/rex/graphics/native_dds_upload.h').write_bytes((ROOT/'port/src/native_dds_upload.h').read_bytes())
     (source/'src/graphics/d3d12/ch2k8_native_dds.inl').write_bytes((ROOT/'port/src/native_dds_d3d12.inl').read_bytes())
+    common_cache = source/'src/graphics/pipeline/texture/cache.cpp'
+    original = common_cache.read_text(encoding='utf-8')
+    updated = patch_texture_requests(original)
+    if updated != original:
+        common_cache.write_text(updated, encoding='utf-8', newline='\n')
+
+
+def patch_texture_requests(text):
+    marker = '// CH2K8 avoid a write to the invalidation flag on steady-state draws.'
+    if marker in text:
+        return text
+    text = once(text, '  if (texture_became_outdated_.exchange(false, std::memory_order_acquire)) {',
+        f'  {marker}\n'
+        '  if (texture_became_outdated_.load(std::memory_order_acquire) &&\n'
+        '      texture_became_outdated_.exchange(false, std::memory_order_acquire)) {')
+    text = once(text, '  uint32_t textures_remaining = used_texture_mask & ~texture_bindings_in_sync_;\n'
+        '  uint32_t index = 0;', '  uint32_t index = 0;')
+    return once(text, '  // Update the texture keys and the textures.\n  uint32_t bindings_changed = 0;',
+        '''  // Only changed fetch slots need decoding or texture uploads. The backend
+  // still tracks resource state and usage for every texture used by the draw.
+  uint32_t textures_remaining = used_texture_mask & ~texture_bindings_in_sync_;
+  if (!textures_remaining) {
+    COUNT_profile_set("gpu/texture_cache/request_textures_pending_load_count", 0);
+    COUNT_profile_set("gpu/texture_cache/request_textures_pending_range_count", 0);
+    return;
+  }
+
+  // Update the texture keys and the textures.
+  uint32_t bindings_changed = 0;''')

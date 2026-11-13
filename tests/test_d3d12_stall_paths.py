@@ -540,3 +540,39 @@ int main() {
   }
 }
 ''')
+
+
+def test_texture_fast_path_checks_invalidation_before_reusing_bindings(sdk_source, tmp_path):
+    from prepare_native_assets_sdk import patch_texture_requests
+
+    source = subprocess.check_output([
+        'git', '-C', str(sdk_source), 'show', 'HEAD:src/graphics/pipeline/texture/cache.cpp',
+    ], text=True)
+    source = patch_texture_requests(source)
+    start = source.index('  // CH2K8 avoid a write to the invalidation flag')
+    end = source.index('  // Update the texture keys', start)
+    execute(tmp_path, r'''
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#define COUNT_profile_set(...)
+int main() {
+  uint32_t texture_bindings_in_sync_ = 1;
+  std::atomic<bool> texture_became_outdated_{false};
+  uint32_t processed = 0;
+  auto ResetTextureBindings = [&] { texture_bindings_in_sync_ = 0; };
+  auto request = [&](uint32_t used_texture_mask) {
+'''+source[start:end]+r'''
+    processed = textures_remaining;
+  };
+  request(1);
+  assert(processed == 0);
+  request(3);
+  assert(processed == 2);
+  texture_became_outdated_.store(true, std::memory_order_release);
+  request(0);
+  assert(texture_bindings_in_sync_ == 0 && !texture_became_outdated_);
+  request(3);
+  assert(processed == 3);
+}
+''')
