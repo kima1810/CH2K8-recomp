@@ -212,6 +212,30 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
     updated = patch_shared_memory_requests(text)
     if updated != text:
         shared_cpp.write_text(updated, encoding='utf-8', newline='\n')
+    shared_d3d12 = source/'src/graphics/d3d12/shared_memory.cpp'
+    text = shared_d3d12.read_text(encoding='utf-8')
+    updated = patch_d3d12_sparse_memory(text)
+    if updated != text:
+        shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
+
+
+def patch_d3d12_sparse_memory(text):
+    if 'REXCVAR_DEFINE_INT32(ch2k8_sparse_heap_mib,' in text:
+        return text
+    text = once(text, 'REXCVAR_DEFINE_BOOL(d3d12_tiled_shared_memory,', '''REXCVAR_DECLARE(bool, ch2k8_gpu_stats);
+REXCVAR_DEFINE_INT32(ch2k8_sparse_heap_mib, 4, "GPU/CH2K8",
+                     "D3D12 shared memory tile heap granularity in MiB (1, 2, or 4)")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+REXCVAR_DEFINE_BOOL(d3d12_tiled_shared_memory,''')
+    text = once(text, '''    InitializeSparseHostGpuMemory(
+        std::max(kHostGpuMemoryOptimalSparseAllocationLog2, uint32_t(16)));''', '''    const int32_t heap_mib = REXCVAR_GET(ch2k8_sparse_heap_mib);
+    InitializeSparseHostGpuMemory(heap_mib == 1 ? 20 : heap_mib == 2 ? 21 :
+                                  kHostGpuMemoryOptimalSparseAllocationLog2);''')
+    return once(text, '  buffer_tiled_heaps_.push_back(heap);', '''  buffer_tiled_heaps_.push_back(heap);
+  if (REXCVAR_GET(ch2k8_gpu_stats)) {
+    REXGPU_INFO("CH2K8 sparse shared memory allocation: {} bytes", length_bytes);
+  }''')
 
 
 def patch_shared_memory_requests(text):
