@@ -117,7 +117,8 @@ bool D3D12TextureCache::LoadTextureDataFromResidentMemoryImpl(''')
     key.key = binding->key;''')
         text=once(text,'  uint32_t mip_levels = texture_key.mip_max_level + 1;','  uint32_t mip_levels = texture.native_dds_ ? texture.native_dds_->mips : texture_key.mip_max_level + 1;')
         cpp.write_text(text,encoding='utf-8',newline='\n')
-    if '// CH2K8 native DDS retirement pump v1' not in text:
+    if ('// CH2K8 native DDS retirement pump v1' not in text and
+            '// CH2K8 retire DDS resources when the fence advances.' not in text):
         header_text=header.read_text(encoding='utf-8')
         header_text=once(header_text,'  bool TryLoadNativeDDS(D3D12Texture& texture);','''  // CH2K8 native DDS retirement pump v1
   std::unordered_set<D3D12Texture*> native_pending_retirements_;
@@ -146,6 +147,145 @@ bool D3D12TextureCache::LoadTextureDataFromResidentMemoryImpl(''')
     for (auto descriptor : retired.descriptors) d3d12_texture_cache.ReleaseTextureDescriptor(descriptor);
   for (auto descriptor : native_retired_descriptors_) d3d12_texture_cache.ReleaseTextureDescriptor(descriptor);''')
         cpp.write_text(text,encoding='utf-8',newline='\n')
+    if '// CH2K8 retire DDS resources when the fence advances.' not in text:
+        header_text = header.read_text(encoding='utf-8')
+        header_text = once(header_text, '  void ClearCache() override;',
+            '  void ClearCache() override;\n'
+            '  void CompletedSubmissionUpdated(uint64_t completed_submission_index) override;')
+        start = text.index('void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {')
+        end = text.index('#if XE_GPU_FINE_GRAINED_DRAW_SCOPES', start)
+        text = text[:start] + '''void D3D12TextureCache::CompletedSubmissionUpdated(uint64_t completed_submission_index) {
+  // CH2K8 retire DDS resources when the fence advances.
+  std::erase_if(native_uploads_, [completed_submission_index](const auto& upload) {
+    return upload.first <= completed_submission_index;
+  });
+  std::erase_if(native_pending_retirements_, [&](D3D12Texture* texture) {
+    texture->CollectNativeRetired(*this, completed_submission_index);
+    return texture->native_retired_resources_.empty();
+  });
+  TextureCache::CompletedSubmissionUpdated(completed_submission_index);
+}
+
+void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
+''' + text[end:]
+        header.write_text(header_text, encoding='utf-8', newline='\n')
+        cpp.write_text(text, encoding='utf-8', newline='\n')
     (source/'include/rex/graphics/native_dds.h').write_bytes((ROOT/'port/src/native_dds.h').read_bytes())
     (source/'include/rex/graphics/native_dds_upload.h').write_bytes((ROOT/'port/src/native_dds_upload.h').read_bytes())
     (source/'src/graphics/d3d12/ch2k8_native_dds.inl').write_bytes((ROOT/'port/src/native_dds_d3d12.inl').read_bytes())
+    common_cache = source/'src/graphics/pipeline/texture/cache.cpp'
+    original = common_cache.read_text(encoding='utf-8')
+    updated = patch_texture_requests(original)
+    if updated != original:
+        common_cache.write_text(updated, encoding='utf-8', newline='\n')
+    common_header = source/'include/rex/graphics/pipeline/texture/cache.h'
+    text = common_header.read_text(encoding='utf-8')
+    if 'void InvalidateTextureFetchMask(' not in text:
+        text = once(text, '    texture_bindings_in_sync_ &= ~mask;\n  }',
+            '    InvalidateTextureFetchMask(mask);\n  }\n\n'
+            '  void InvalidateTextureFetchMask(uint32_t mask) { texture_bindings_in_sync_ &= ~mask; }')
+        common_header.write_text(text, encoding='utf-8', newline='\n')
+    text = cpp.read_text(encoding='utf-8')
+    marker = '// CH2K8 visit each texture binding once per draw.'
+    if marker not in text:
+        start = text.index('  // Pre-create 3D-as-2D wrappers before draw setup.')
+        end = text.index('  // Transition the textures to the needed usage', start)
+        text = text[:start] + f'  {marker}\n' + text[end:]
+        anchor = '    D3D12Texture* binding_texture = static_cast<D3D12Texture*>(binding->texture);'
+        start = text.index(anchor, start)
+        text = text[:start] + '''    if (binding->key.dimension == xenos::DataDimension::k3D &&
+        REXCVAR_GET(gpu_3d_to_2d_texture)) {
+      constexpr auto shader_resource = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
+                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+      if (binding->texture) {
+        static_cast<D3D12Texture*>(binding->texture)->GetOrCreate3DAs2DResource(shader_resource);
+      }
+      if (binding->texture_signed) {
+        static_cast<D3D12Texture*>(binding->texture_signed)->GetOrCreate3DAs2DResource(shader_resource);
+      }
+    }
+''' + text[start:]
+        cpp.write_text(text, encoding='utf-8', newline='\n')
+
+    shared_cpp = source/'src/graphics/shared_memory.cpp'
+    text = shared_cpp.read_text(encoding='utf-8')
+    updated = patch_shared_memory_requests(text)
+    if updated != text:
+        shared_cpp.write_text(updated, encoding='utf-8', newline='\n')
+
+
+def patch_shared_memory_requests(text):
+    marker = '// CH2K8 keep single-range requests off the heap.'
+    if marker in text:
+        return text
+    start = text.index('  // Some texture or buffer is empty, for example - safe to draw in this case.')
+    end = text.index('  for (const std::pair<uint32_t, uint32_t>& range : merged_ranges)', start)
+    block = text[start:end]
+    block = once(block, '  SCOPE_profile_cpu_f("gpu");\n\n', '')
+    block = once(block, '  std::vector<std::pair<uint32_t, uint32_t>> merged_ranges;\n', '')
+    block = block.replace('merged_ranges', 'range_storage')
+    block = '\n'.join('  ' + line if line else '' for line in block.rstrip().splitlines())
+    text = once(text, '#include <rex/graphics/shared_memory.h>',
+        '#include <rex/graphics/shared_memory.h>\n\n#include <span>')
+    start = text.index('  // Some texture or buffer is empty, for example - safe to draw in this case.')
+    end = text.index('  for (const std::pair<uint32_t, uint32_t>& range : merged_ranges)', start)
+    return text[:start] + f'''  {marker}
+  std::vector<std::pair<uint32_t, uint32_t>> range_storage;
+  std::span<const std::pair<uint32_t, uint32_t>> merged_ranges;
+  if (count == 1) {{
+    const auto [start, length] = ranges[0];
+    if (!length) {{
+      return true;
+    }}
+    if (start > kBufferSize || (kBufferSize - start) < length) {{
+      return false;
+    }}
+    merged_ranges = {{ranges, 1}};
+  }} else {{
+{block}
+    merged_ranges = range_storage;
+  }}
+
+  SCOPE_profile_cpu_f("gpu");
+
+''' + text[end:]
+
+
+def patch_texture_requests(text):
+    marker = '// CH2K8 avoid a write to the invalidation flag on steady-state draws.'
+    if marker in text:
+        return patch_texture_range_batch(text)
+    text = once(text, '  if (texture_became_outdated_.exchange(false, std::memory_order_acquire)) {',
+        f'  {marker}\n'
+        '  if (texture_became_outdated_.load(std::memory_order_acquire) &&\n'
+        '      texture_became_outdated_.exchange(false, std::memory_order_acquire)) {')
+    text = once(text, '  uint32_t textures_remaining = used_texture_mask & ~texture_bindings_in_sync_;\n'
+        '  uint32_t index = 0;', '  uint32_t index = 0;')
+    return patch_texture_range_batch(once(text, '  // Update the texture keys and the textures.\n  uint32_t bindings_changed = 0;',
+        '''  // Only changed fetch slots need decoding or texture uploads. The backend
+  // still tracks resource state and usage for every texture used by the draw.
+  uint32_t textures_remaining = used_texture_mask & ~texture_bindings_in_sync_;
+  if (!textures_remaining) {
+    COUNT_profile_set("gpu/texture_cache/request_textures_pending_load_count", 0);
+    COUNT_profile_set("gpu/texture_cache/request_textures_pending_range_count", 0);
+    return;
+  }
+
+  // Update the texture keys and the textures.
+  uint32_t bindings_changed = 0;'''))
+
+
+def patch_texture_range_batch(text):
+    if '// CH2K8 batch texture upload ranges directly.' in text:
+        return text
+    text = once(text, '  std::vector<PendingSharedMemoryRange> pending_shared_memory_ranges;',
+        '  // CH2K8 batch texture upload ranges directly.\n'
+        '  std::vector<std::pair<uint32_t, uint32_t>> pending_shared_memory_ranges;')
+    text = once(text, '      pending_shared_memory_ranges.push_back(pending_ranges[i]);',
+        '      pending_shared_memory_ranges.emplace_back(pending_ranges[i].start, pending_ranges[i].length);')
+    start = text.index('  bool batched_shared_memory_request_succeeded = true;')
+    end = text.index('  if (batched_shared_memory_request_succeeded)', start)
+    return text[:start] + '''  const bool batched_shared_memory_request_succeeded =
+      shared_memory().RequestRanges(pending_shared_memory_ranges.data(), pending_shared_memory_ranges.size());
+
+''' + text[end:]

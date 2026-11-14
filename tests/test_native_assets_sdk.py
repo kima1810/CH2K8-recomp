@@ -13,7 +13,9 @@ def test_pinned_native_asset_patch_is_complete_and_idempotent(tmp_path):
     source=ROOT/'work/third_party/rexglue-vulkan'
     if not (source/'.git').exists():pytest.skip('Requires local pinned source SDK')
     files=['include/rex/graphics/shared_memory.h','include/rex/graphics/d3d12/texture_cache.h',
-           'src/graphics/d3d12/texture_cache.cpp','src/filesystem/devices/host_path_device.cpp']
+           'src/graphics/d3d12/texture_cache.cpp','src/filesystem/devices/host_path_device.cpp',
+           'src/graphics/pipeline/texture/cache.cpp','include/rex/graphics/pipeline/texture/cache.h',
+           'src/graphics/shared_memory.cpp']
     for name in files:
         path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(subprocess.check_output(['git','-C',str(source),'show','HEAD:'+name]))
@@ -25,6 +27,10 @@ def test_pinned_native_asset_patch_is_complete_and_idempotent(tmp_path):
     assert b'NativeRangeWrittenByGpu' in before[Path(files[0])]
     assert b'native_revision' in before[Path(files[1])]
     assert b'native_retired_resources_' in before[Path(files[1])]
+    retirement, draws = before[Path(files[2])].split(b'void D3D12TextureCache::RequestTextures(', 1)
+    assert b'std::erase_if(native_uploads_' in retirement
+    assert b'std::erase_if(native_uploads_' not in draws
+    assert b'texture_became_outdated_.load(std::memory_order_acquire)' in before[Path(files[4])]
 
 
 def test_native_dds_payload_release_and_fenced_retirement(tmp_path):
@@ -33,7 +39,9 @@ def test_native_dds_payload_release_and_fenced_retirement(tmp_path):
     sdk=ROOT/'work/third_party/rexglue-vulkan'
     if not (sdk/'.git').exists():pytest.skip('Requires pinned SDK')
     for name in ['include/rex/graphics/shared_memory.h','include/rex/graphics/d3d12/texture_cache.h',
-                 'src/graphics/d3d12/texture_cache.cpp','src/filesystem/devices/host_path_device.cpp']:
+                 'src/graphics/d3d12/texture_cache.cpp','src/filesystem/devices/host_path_device.cpp',
+                 'src/graphics/pipeline/texture/cache.cpp','include/rex/graphics/pipeline/texture/cache.h',
+                 'src/graphics/shared_memory.cpp']:
         path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(subprocess.check_output(['git','-C',str(sdk),'show','HEAD:'+name]))
     prepare_native_assets(tmp_path)

@@ -85,6 +85,8 @@ int main() {
 
 
 def test_pinned_shader_patches_and_atomic_rejection(tmp_path, monkeypatch):
+    from prepare_native_shader_sdk import patch_translation_cache, patch_translation_cache_header
+
     upstream = ROOT/'work/third_party/rexglue-vulkan'
     if not upstream.is_dir():
         pytest.skip('Requires local pinned SDK')
@@ -102,9 +104,17 @@ def test_pinned_shader_patches_and_atomic_rejection(tmp_path, monkeypatch):
         path.parent.mkdir(parents=True,exist_ok=True)
         path.write_text(original)
         assert patch(original) != original
-    monkeypatch.setattr(subprocess,'check_output',lambda args,**kw: originals[args[-1].removeprefix('HEAD:')])
     # Upgrade the exact previously published three-file shader patch atomically.
     previous = dict(zip(functions, (patch_header_v3, patch_pipeline_v3, patch_output_v3, lambda text:text)))
+    for name, patch in {
+        'include/rex/graphics/pipeline/shader/shader.h': patch_translation_cache_header,
+        'src/graphics/pipeline/shader/shader.cpp': patch_translation_cache,
+    }.items():
+        original = subprocess.check_output(['git', '-C', str(upstream), 'show', 'HEAD:'+name], text=True)
+        originals[name] = original
+        (tmp_path/name).write_text(original)
+        functions[name] = patch
+    monkeypatch.setattr(subprocess,'check_output',lambda args,**kw: originals[args[-1].removeprefix('HEAD:')])
     for name, patch in previous.items():
         (tmp_path/name).write_text(patch(originals[name]))
     prepare_native_shaders(tmp_path)
