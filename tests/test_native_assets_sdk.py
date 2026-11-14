@@ -39,7 +39,7 @@ def test_pinned_native_asset_patch_is_complete_and_idempotent(tmp_path):
     reuse = reuse.split(b'copy_pages = 1;', 1)[0]
     assert reuse.index(b'MakeRangeValid(') < reuse.index(b'matches_snapshot(upload_range_start)')
     assert reuse.count(b'matches_snapshot(') == 1
-    assert b'resident != UINT32_MAX && resident != page && candidate != page' in before[Path(files[7])]
+    assert b'if (resident != page && candidate != page)' in before[Path(files[7])]
 
 
 def test_native_dds_payload_release_and_fenced_retirement(tmp_path):

@@ -227,13 +227,32 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
     tune_upload_reuse(source)
     simplify_upload_reuse_check(source)
     filter_upload_snapshot_collisions(source)
+    defer_cold_upload_snapshots(source)
+
+
+def defer_cold_upload_snapshots(source):
+    path = source/'src/graphics/d3d12/shared_memory.cpp'
+    text = path.read_text(encoding='utf-8')
+    marker = '// Save page bytes only after observing a second upload.'
+    if marker in text:
+        return
+    text = once(text, '''          // Keep reusable snapshots across one-off slot collisions.
+          const size_t slot = page & snapshot_mask;
+          auto& resident = upload_snapshot_pages_[slot];
+          auto& candidate = upload_snapshot_candidates_[slot];
+          if (resident != UINT32_MAX && resident != page && candidate != page) {''', f'''          {marker}
+          const size_t slot = page & snapshot_mask;
+          auto& resident = upload_snapshot_pages_[slot];
+          auto& candidate = upload_snapshot_candidates_[slot];
+          if (resident != page && candidate != page) {{''')
+    path.write_text(text, encoding='utf-8', newline='\n')
 
 
 def filter_upload_snapshot_collisions(source):
     path = source/'src/graphics/d3d12/shared_memory.cpp'
     text = path.read_text(encoding='utf-8')
     marker = '// Keep reusable snapshots across one-off slot collisions.'
-    if marker in text:
+    if marker in text or '// Save page bytes only after observing a second upload.' in text:
         return
     header = source/'include/rex/graphics/d3d12/shared_memory.h'
     header_text = header.read_text(encoding='utf-8')
