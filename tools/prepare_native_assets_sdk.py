@@ -254,14 +254,14 @@ def patch_shared_memory_requests(text):
 def patch_texture_requests(text):
     marker = '// CH2K8 avoid a write to the invalidation flag on steady-state draws.'
     if marker in text:
-        return text
+        return patch_texture_range_batch(text)
     text = once(text, '  if (texture_became_outdated_.exchange(false, std::memory_order_acquire)) {',
         f'  {marker}\n'
         '  if (texture_became_outdated_.load(std::memory_order_acquire) &&\n'
         '      texture_became_outdated_.exchange(false, std::memory_order_acquire)) {')
     text = once(text, '  uint32_t textures_remaining = used_texture_mask & ~texture_bindings_in_sync_;\n'
         '  uint32_t index = 0;', '  uint32_t index = 0;')
-    return once(text, '  // Update the texture keys and the textures.\n  uint32_t bindings_changed = 0;',
+    return patch_texture_range_batch(once(text, '  // Update the texture keys and the textures.\n  uint32_t bindings_changed = 0;',
         '''  // Only changed fetch slots need decoding or texture uploads. The backend
   // still tracks resource state and usage for every texture used by the draw.
   uint32_t textures_remaining = used_texture_mask & ~texture_bindings_in_sync_;
@@ -272,4 +272,20 @@ def patch_texture_requests(text):
   }
 
   // Update the texture keys and the textures.
-  uint32_t bindings_changed = 0;''')
+  uint32_t bindings_changed = 0;'''))
+
+
+def patch_texture_range_batch(text):
+    if '// CH2K8 batch texture upload ranges directly.' in text:
+        return text
+    text = once(text, '  std::vector<PendingSharedMemoryRange> pending_shared_memory_ranges;',
+        '  // CH2K8 batch texture upload ranges directly.\n'
+        '  std::vector<std::pair<uint32_t, uint32_t>> pending_shared_memory_ranges;')
+    text = once(text, '      pending_shared_memory_ranges.push_back(pending_ranges[i]);',
+        '      pending_shared_memory_ranges.emplace_back(pending_ranges[i].start, pending_ranges[i].length);')
+    start = text.index('  bool batched_shared_memory_request_succeeded = true;')
+    end = text.index('  if (batched_shared_memory_request_succeeded)', start)
+    return text[:start] + '''  const bool batched_shared_memory_request_succeeded =
+      shared_memory().RequestRanges(pending_shared_memory_ranges.data(), pending_shared_memory_ranges.size());
+
+''' + text[end:]
