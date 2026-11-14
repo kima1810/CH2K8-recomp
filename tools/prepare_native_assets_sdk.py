@@ -226,6 +226,44 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
             '  uint32_t sparse_heap_remaining_bytes_ = 0;')
         sparse_header.write_text(text, encoding='utf-8', newline='\n')
     prepare_shared_upload_trim(source)
+    text = shared_d3d12.read_text(encoding='utf-8')
+    updated = patch_shared_upload_stats(text)
+    if updated != text:
+        shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
+
+
+def patch_shared_upload_stats(text):
+    if '// CH2K8 count shared-memory upload traffic.' in text:
+        return text
+    start = text.index('bool D3D12SharedMemory::UploadRanges(')
+    prefix, upload = text[:start], text[start:]
+    upload = once(upload, '  auto& command_list = command_processor_.GetDeferredCommandList();', '''  auto& command_list = command_processor_.GetDeferredCommandList();
+  // CH2K8 count shared-memory upload traffic.
+  const bool count_uploads = REXCVAR_GET(ch2k8_gpu_stats);
+  uint64_t bytes = 0;
+  uint32_t copies = 0;''')
+    upload = once(upload, '      uint32_t upload_buffer_pages =', '''      if (count_uploads) {
+        bytes += upload_buffer_size;
+        ++copies;
+      }
+      uint32_t upload_buffer_pages =''')
+    upload = once(upload, '  return true;\n}\n', '''  if (count_uploads) {
+    using Clock = std::chrono::steady_clock;
+    static thread_local auto last_report = Clock::now();
+    static thread_local uint64_t total_bytes = 0, total_copies = 0;
+    total_bytes += bytes;
+    total_copies += copies;
+    const auto now = Clock::now();
+    if (now - last_report >= std::chrono::seconds(1)) {
+      REXGPU_INFO("CH2K8 shared uploads: {} bytes in {} copies", total_bytes, total_copies);
+      total_bytes = total_copies = 0;
+      last_report = now;
+    }
+  }
+  return true;
+}
+''')
+    return once(prefix, '#include <rex/math.h>', '#include <chrono>\n\n#include <rex/math.h>') + upload
 
 
 def prepare_shared_upload_trim(source):
