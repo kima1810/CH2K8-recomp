@@ -217,6 +217,136 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
     updated = patch_d3d12_sparse_memory(text)
     if updated != text:
         shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
+    prepare_sparse_header(source)
+    prepare_shared_upload_trim(source)
+    text = shared_d3d12.read_text(encoding='utf-8')
+    updated = patch_shared_upload_stats(text)
+    if updated != text:
+        shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
+    prepare_upload_reuse(source)
+
+
+def prepare_upload_reuse(source):
+    edits = [
+        ('include/rex/graphics/shared_memory.h', '  void RangeWrittenByGpu(',
+         '  virtual void RangeWrittenByGpu('),
+        ('include/rex/graphics/shared_memory.h', '  void InvalidateAllPages();',
+         '  virtual void InvalidateAllPages();'),
+        ('include/rex/graphics/d3d12/shared_memory.h', '  void ClearCache() override;',
+         '''  void ClearCache() override;
+  void RangeWrittenByGpu(uint32_t start, uint32_t length) override;
+  void InvalidateAllPages() override;'''),
+        ('include/rex/graphics/d3d12/shared_memory.h', '  uint64_t next_upload_trim_submission_ = 300;',
+         '''  uint64_t next_upload_trim_submission_ = 300;
+  static constexpr uint32_t kUploadSnapshotSlots = 2048;
+  std::vector<uint8_t> upload_snapshot_bytes_;
+  std::vector<uint32_t> upload_snapshot_pages_;'''),
+        ('src/graphics/d3d12/shared_memory.cpp', 'REXCVAR_DEFINE_BOOL(d3d12_tiled_shared_memory,',
+         '''REXCVAR_DEFINE_BOOL(ch2k8_reuse_shared_uploads, false, "GPU/CH2K8",
+                    "Skip byte-identical shared uploads using a bounded CPU snapshot")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+REXCVAR_DEFINE_BOOL(d3d12_tiled_shared_memory,'''),
+        ('src/graphics/d3d12/shared_memory.cpp', 'void D3D12SharedMemory::ClearCache() {',
+         '''void D3D12SharedMemory::RangeWrittenByGpu(uint32_t start, uint32_t length) {
+  if (!upload_snapshot_pages_.empty() && start < kBufferSize && length) {
+    const uint32_t first = start >> page_size_log2();
+    const uint32_t last = (start + std::min(length, kBufferSize - start) - 1) >> page_size_log2();
+    if (last - first >= kUploadSnapshotSlots - 1) {
+      std::fill(upload_snapshot_pages_.begin(), upload_snapshot_pages_.end(), UINT32_MAX);
+    } else {
+      for (uint32_t page = first; page <= last; ++page) {
+        auto& tag = upload_snapshot_pages_[page % kUploadSnapshotSlots];
+        if (tag == page) tag = UINT32_MAX;
+      }
+    }
+  }
+  SharedMemory::RangeWrittenByGpu(start, length);
+}
+
+void D3D12SharedMemory::InvalidateAllPages() {
+  std::fill(upload_snapshot_pages_.begin(), upload_snapshot_pages_.end(), UINT32_MAX);
+  SharedMemory::InvalidateAllPages();
+}
+
+void D3D12SharedMemory::ClearCache() {'''),
+        ('src/graphics/d3d12/shared_memory.cpp', 'void D3D12SharedMemory::Shutdown(bool from_destructor) {',
+         '''void D3D12SharedMemory::Shutdown(bool from_destructor) {
+  upload_snapshot_pages_.clear();
+  upload_snapshot_bytes_.clear();'''),
+        ('src/graphics/d3d12/shared_memory.cpp', '  uint32_t copies = 0;\n  for (auto upload_range',
+         '''  uint32_t copies = 0;
+  const uint32_t page_size = uint32_t(1) << page_size_log2();
+  if (REXCVAR_GET(ch2k8_reuse_shared_uploads) && upload_snapshot_pages_.empty()) {
+    upload_snapshot_bytes_.resize(size_t(kUploadSnapshotSlots) * page_size);
+    upload_snapshot_pages_.assign(kUploadSnapshotSlots, UINT32_MAX);
+  }
+  auto snapshot = [&](uint32_t page) {
+    return upload_snapshot_bytes_.data() + size_t(page % kUploadSnapshotSlots) * page_size;
+  };
+  auto matches_snapshot = [&](uint32_t page) {
+    return upload_snapshot_pages_[page % kUploadSnapshotSlots] == page &&
+           std::memcmp(snapshot(page), memory().TranslatePhysical(page << page_size_log2()),
+                       page_size) == 0;
+  };
+  for (auto upload_range'''),
+        ('src/graphics/d3d12/shared_memory.cpp', '''  CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_COPY_DEST);
+  command_processor_.SubmitBarriers();
+  auto& command_list''', '''  bool prepared_copy = false;
+  auto& command_list'''),
+        ('src/graphics/d3d12/shared_memory.cpp', '      command_list.D3DCopyBufferRegion(buffer_, upload_range_start',
+         '''      if (!prepared_copy) {
+        CommitUAVWritesAndTransitionBuffer(D3D12_RESOURCE_STATE_COPY_DEST);
+        command_processor_.SubmitBarriers();
+        prepared_copy = true;
+      }
+      command_list.D3DCopyBufferRegion(buffer_, upload_range_start'''),
+        ('src/graphics/d3d12/shared_memory.cpp', '    while (upload_range_length != 0) {',
+         '''    while (upload_range_length != 0) {
+      uint32_t copy_pages = upload_range_length;
+      if (!upload_snapshot_pages_.empty()) {
+        if (matches_snapshot(upload_range_start)) {
+          MakeRangeValid(upload_range_start << page_size_log2(), page_size, false);
+          // Recheck after arming the CPU write watch. A write between the first
+          // comparison and watch setup must still be uploaded.
+          if (matches_snapshot(upload_range_start)) {
+            ++upload_range_start;
+            --upload_range_length;
+            continue;
+          }
+        }
+        copy_pages = 1;
+        while (copy_pages < upload_range_length && !matches_snapshot(upload_range_start + copy_pages)) {
+          ++copy_pages;
+        }
+      }'''),
+        ('src/graphics/d3d12/shared_memory.cpp', 'upload_range_length << page_size_log2(),',
+         'copy_pages << page_size_log2(),'),
+        ('src/graphics/d3d12/shared_memory.cpp', '      std::memcpy(upload_buffer_mapping,\n                  memory().TranslatePhysical(upload_range_start << page_size_log2()),\n                  upload_buffer_size);',
+         '''      if (upload_snapshot_pages_.empty()) {
+        std::memcpy(upload_buffer_mapping,
+                    memory().TranslatePhysical(upload_range_start << page_size_log2()),
+                    upload_buffer_size);
+      } else {
+        for (uint32_t i = 0; i < (upload_buffer_size >> page_size_log2()); ++i) {
+          const uint32_t page = upload_range_start + i;
+          uint8_t* saved = snapshot(page);
+          std::memcpy(saved, memory().TranslatePhysical(page << page_size_log2()), page_size);
+          std::memcpy(upload_buffer_mapping + size_t(i) * page_size, saved, page_size);
+          upload_snapshot_pages_[page % kUploadSnapshotSlots] = page;
+        }
+      }'''),
+    ]
+    for relative, original, updated in edits:
+        path = source/relative
+        text = path.read_text(encoding='utf-8')
+        marker = 'REXCVAR_DEFINE_BOOL(ch2k8_reuse_shared_uploads,' if updated.startswith(
+            'REXCVAR_DEFINE_BOOL(ch2k8_reuse_shared_uploads,') else updated
+        if marker not in text:
+            path.write_text(once(text, original, updated), encoding='utf-8', newline='\n')
+
+
+def prepare_sparse_header(source):
     sparse_header = source/'include/rex/graphics/d3d12/shared_memory.h'
     text = sparse_header.read_text(encoding='utf-8')
     if 'sparse_heap_remaining_bytes_' not in text:
@@ -225,11 +355,6 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
             '  ID3D12Heap* sparse_pool_heap_ = nullptr;\n'
             '  uint32_t sparse_heap_remaining_bytes_ = 0;')
         sparse_header.write_text(text, encoding='utf-8', newline='\n')
-    prepare_shared_upload_trim(source)
-    text = shared_d3d12.read_text(encoding='utf-8')
-    updated = patch_shared_upload_stats(text)
-    if updated != text:
-        shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
 
 
 def patch_shared_memory_upload_merging(text):
@@ -331,7 +456,9 @@ void GraphicsUploadBufferPool::ClearCache() {'''),
     ]
     for path, original, updated in edits:
         text = path.read_text(encoding='utf-8')
-        if updated not in text:
+        marker = 'REXCVAR_DEFINE_BOOL(ch2k8_trim_shared_uploads,' if updated.startswith(
+            'REXCVAR_DEFINE_BOOL(ch2k8_trim_shared_uploads,') else updated
+        if marker not in text:
             path.write_text(once(text, original, updated), encoding='utf-8', newline='\n')
 
 
