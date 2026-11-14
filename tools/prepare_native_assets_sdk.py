@@ -224,9 +224,42 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
     if updated != text:
         shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
     prepare_upload_reuse(source)
+    tune_upload_reuse(source)
+
+
+def tune_upload_reuse(source):
+    path = source/'src/graphics/d3d12/shared_memory.cpp'
+    text = path.read_text(encoding='utf-8')
+    if 'REXCVAR_DEFINE_INT32(ch2k8_upload_snapshot_mib,' in text:
+        previous = 'REXCVAR_DEFINE_INT32(ch2k8_upload_snapshot_mib, 2,'
+        if previous in text:
+            path.write_text(once(text, previous, 'REXCVAR_DEFINE_INT32(ch2k8_upload_snapshot_mib, 8,'),
+                            encoding='utf-8', newline='\n')
+        return
+    text = once(text, 'REXCVAR_DEFINE_BOOL(ch2k8_reuse_shared_uploads,', '''REXCVAR_DEFINE_INT32(ch2k8_upload_snapshot_mib, 8, "GPU/CH2K8",
+                     "RAM budget for exact upload snapshots, rounded down to 1, 2, 4, or 8 MiB")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+REXCVAR_DEFINE_BOOL(ch2k8_reuse_shared_uploads,''')
+    text = once(text, '''    upload_snapshot_bytes_.resize(size_t(kUploadSnapshotSlots) * page_size);
+    upload_snapshot_pages_.assign(kUploadSnapshotSlots, UINT32_MAX);''', '''    const uint32_t budget_mib = std::clamp(REXCVAR_GET(ch2k8_upload_snapshot_mib), 1, 8);
+    const uint32_t slots = (std::bit_floor(budget_mib) << 20) / page_size;
+    upload_snapshot_bytes_.resize(size_t(slots) * page_size);
+    upload_snapshot_pages_.assign(slots, UINT32_MAX);''')
+    text = text.replace('kUploadSnapshotSlots - 1', 'upload_snapshot_pages_.size() - 1')
+    text = text.replace('page % kUploadSnapshotSlots', '(page & (upload_snapshot_pages_.size() - 1))')
+    text = once(text, '#include <cstring>', '#include <bit>\n#include <cstring>')
+    header = source/'include/rex/graphics/d3d12/shared_memory.h'
+    header.write_text(once(header.read_text(encoding='utf-8'),
+                         '  static constexpr uint32_t kUploadSnapshotSlots = 2048;\n', ''),
+                      encoding='utf-8', newline='\n')
+    path.write_text(text, encoding='utf-8', newline='\n')
 
 
 def prepare_upload_reuse(source):
+    if 'REXCVAR_DEFINE_INT32(ch2k8_upload_snapshot_mib,' in (
+            source/'src/graphics/d3d12/shared_memory.cpp').read_text(encoding='utf-8'):
+        return
     edits = [
         ('include/rex/graphics/shared_memory.h', '  void RangeWrittenByGpu(',
          '  virtual void RangeWrittenByGpu('),
