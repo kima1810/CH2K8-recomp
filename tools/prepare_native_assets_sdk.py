@@ -225,6 +225,65 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
             '  ID3D12Heap* sparse_pool_heap_ = nullptr;\n'
             '  uint32_t sparse_heap_remaining_bytes_ = 0;')
         sparse_header.write_text(text, encoding='utf-8', newline='\n')
+    prepare_shared_upload_trim(source)
+
+
+def prepare_shared_upload_trim(source):
+    header = source/'include/rex/ui/graphics_upload_buffer_pool.h'
+    cpp = source/'src/ui/graphics_upload_buffer_pool.cpp'
+    shared = source/'src/graphics/d3d12/shared_memory.cpp'
+    edits = [
+        (shared, 'REXCVAR_DEFINE_BOOL(d3d12_tiled_shared_memory,', '''REXCVAR_DEFINE_BOOL(ch2k8_trim_shared_uploads, false, "GPU/CH2K8",
+                    "Release excess idle D3D12 shared-memory staging pages")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+REXCVAR_DEFINE_BOOL(d3d12_tiled_shared_memory,'''),
+        (header, '  void ClearCache();', '  size_t TrimWritablePages(size_t keep_count);\n  void ClearCache();'),
+        (cpp, 'void GraphicsUploadBufferPool::ClearCache() {', '''size_t GraphicsUploadBufferPool::TrimWritablePages(size_t keep_count) {
+  // The first page may still be referenced by the GPU. Keep it even if the
+  // caller requests zero spare pages. Subsequent writable pages were reclaimed.
+  Page* last_kept = writable_first_;
+  if (!last_kept) {
+    return 0;
+  }
+  while (keep_count && last_kept->next_) {
+    last_kept = last_kept->next_;
+    --keep_count;
+  }
+  Page* page = last_kept->next_;
+  last_kept->next_ = nullptr;
+  writable_last_ = last_kept;
+  size_t trimmed_bytes = 0;
+  while (page) {
+    Page* next = page->next_;
+    delete page;
+    trimmed_bytes += page_size_;
+    page = next;
+  }
+  return trimmed_bytes;
+}
+
+void GraphicsUploadBufferPool::ClearCache() {'''),
+        (shared, '  upload_buffer_pool_->Reclaim(command_processor_.GetCompletedSubmission());', '''  const uint64_t completed = command_processor_.GetCompletedSubmission();
+  upload_buffer_pool_->Reclaim(completed);
+  if (REXCVAR_GET(ch2k8_trim_shared_uploads) && completed >= next_upload_trim_submission_) {
+    // Keep 16 MiB of reusable staging pages for the next burst.
+    const size_t trimmed_bytes = upload_buffer_pool_->TrimWritablePages(8);
+    if (trimmed_bytes && REXCVAR_GET(ch2k8_gpu_stats)) {
+      REXGPU_INFO("CH2K8 shared upload pool trimmed: {} bytes", trimmed_bytes);
+    }
+    next_upload_trim_submission_ = completed + 300;
+  }'''),
+        (source/'include/rex/graphics/d3d12/shared_memory.h',
+         '  uint32_t sparse_heap_remaining_bytes_ = 0;',
+         '  uint32_t sparse_heap_remaining_bytes_ = 0;\n  uint64_t next_upload_trim_submission_ = 300;'),
+        (shared, '  sparse_heap_remaining_bytes_ = 0;\n',
+         '  sparse_heap_remaining_bytes_ = 0;\n  next_upload_trim_submission_ = 300;\n'),
+    ]
+    for path, original, updated in edits:
+        text = path.read_text(encoding='utf-8')
+        if updated not in text:
+            path.write_text(once(text, original, updated), encoding='utf-8', newline='\n')
 
 
 def patch_d3d12_sparse_memory(text):

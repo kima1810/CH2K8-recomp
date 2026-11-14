@@ -16,7 +16,8 @@ def test_pinned_native_asset_patch_is_complete_and_idempotent(tmp_path):
            'src/graphics/d3d12/texture_cache.cpp','src/filesystem/devices/host_path_device.cpp',
            'src/graphics/pipeline/texture/cache.cpp','include/rex/graphics/pipeline/texture/cache.h',
            'src/graphics/shared_memory.cpp','src/graphics/d3d12/shared_memory.cpp',
-           'include/rex/graphics/d3d12/shared_memory.h']
+           'include/rex/graphics/d3d12/shared_memory.h','include/rex/ui/graphics_upload_buffer_pool.h',
+           'src/ui/graphics_upload_buffer_pool.cpp']
     for name in files:
         path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(subprocess.check_output(['git','-C',str(source),'show','HEAD:'+name]))
@@ -32,6 +33,8 @@ def test_pinned_native_asset_patch_is_complete_and_idempotent(tmp_path):
     assert b'std::erase_if(native_uploads_' in retirement
     assert b'std::erase_if(native_uploads_' not in draws
     assert b'texture_became_outdated_.load(std::memory_order_acquire)' in before[Path(files[4])]
+    assert b'upload_buffer_pool_->Reclaim(completed);\n  if (REXCVAR_GET(ch2k8_trim_shared_uploads)' in before[Path(files[7])]
+    assert b'Page* page = last_kept->next_;' in before[Path(files[10])]
 
 
 def test_native_dds_payload_release_and_fenced_retirement(tmp_path):
@@ -43,7 +46,8 @@ def test_native_dds_payload_release_and_fenced_retirement(tmp_path):
                  'src/graphics/d3d12/texture_cache.cpp','src/filesystem/devices/host_path_device.cpp',
                  'src/graphics/pipeline/texture/cache.cpp','include/rex/graphics/pipeline/texture/cache.h',
                  'src/graphics/shared_memory.cpp','src/graphics/d3d12/shared_memory.cpp',
-                 'include/rex/graphics/d3d12/shared_memory.h']:
+                 'include/rex/graphics/d3d12/shared_memory.h','include/rex/ui/graphics_upload_buffer_pool.h',
+                 'src/ui/graphics_upload_buffer_pool.cpp']:
         path=tmp_path/name;path.parent.mkdir(parents=True,exist_ok=True)
         path.write_bytes(subprocess.check_output(['git','-C',str(sdk),'show','HEAD:'+name]))
     prepare_native_assets(tmp_path)
