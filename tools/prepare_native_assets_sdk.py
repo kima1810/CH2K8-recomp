@@ -225,6 +225,29 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
         shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
     prepare_upload_reuse(source)
     tune_upload_reuse(source)
+    simplify_upload_reuse_check(source)
+
+
+def simplify_upload_reuse_check(source):
+    path = source/'src/graphics/d3d12/shared_memory.cpp'
+    text = path.read_text(encoding='utf-8')
+    marker = '// Arm the CPU write watch before comparing the page bytes.'
+    if marker in text:
+        return
+    text = once(text, '''  auto matches_snapshot = [&](uint32_t page) {
+    return upload_snapshot_pages_[(page & (upload_snapshot_pages_.size() - 1))] == page &&''', '''  const size_t snapshot_mask = upload_snapshot_pages_.size() - 1;
+  auto has_snapshot = [&](uint32_t page) {
+    return upload_snapshot_pages_[page & snapshot_mask] == page;
+  };
+  auto matches_snapshot = [&](uint32_t page) {
+    return has_snapshot(page) &&''')
+    text = once(text, '''        if (matches_snapshot(upload_range_start)) {
+          MakeRangeValid(upload_range_start << page_size_log2(), page_size, false);
+          // Recheck after arming the CPU write watch. A write between the first
+          // comparison and watch setup must still be uploaded.''', f'''        if (has_snapshot(upload_range_start)) {{
+          {marker}
+          MakeRangeValid(upload_range_start << page_size_log2(), page_size, false);''')
+    path.write_text(text, encoding='utf-8', newline='\n')
 
 
 def tune_upload_reuse(source):
