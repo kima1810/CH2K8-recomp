@@ -226,6 +226,44 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
     prepare_upload_reuse(source)
     tune_upload_reuse(source)
     simplify_upload_reuse_check(source)
+    filter_upload_snapshot_collisions(source)
+
+
+def filter_upload_snapshot_collisions(source):
+    path = source/'src/graphics/d3d12/shared_memory.cpp'
+    text = path.read_text(encoding='utf-8')
+    marker = '// Keep reusable snapshots across one-off slot collisions.'
+    if marker in text:
+        return
+    header = source/'include/rex/graphics/d3d12/shared_memory.h'
+    header_text = header.read_text(encoding='utf-8')
+    member = '  std::vector<uint32_t> upload_snapshot_candidates_;'
+    if member not in header_text:
+        header.write_text(once(header_text, '  std::vector<uint32_t> upload_snapshot_pages_;',
+            '  std::vector<uint32_t> upload_snapshot_pages_;\n' + member), encoding='utf-8', newline='\n')
+    text = once(text, '    upload_snapshot_pages_.assign(slots, UINT32_MAX);',
+        '    upload_snapshot_pages_.assign(slots, UINT32_MAX);\n'
+        '    upload_snapshot_candidates_.assign(slots, UINT32_MAX);')
+    text = once(text, '  upload_snapshot_pages_.clear();',
+        '  upload_snapshot_pages_.clear();\n  upload_snapshot_candidates_.clear();')
+    text = once(text, 'void D3D12SharedMemory::InvalidateAllPages() {',
+        'void D3D12SharedMemory::InvalidateAllPages() {\n'
+        '  std::fill(upload_snapshot_candidates_.begin(), upload_snapshot_candidates_.end(), UINT32_MAX);')
+    text = once(text, '          uint8_t* saved = snapshot(page);', f'''          {marker}
+          const size_t slot = page & snapshot_mask;
+          auto& resident = upload_snapshot_pages_[slot];
+          auto& candidate = upload_snapshot_candidates_[slot];
+          if (resident != UINT32_MAX && resident != page && candidate != page) {{
+            candidate = page;
+            std::memcpy(upload_buffer_mapping + size_t(i) * page_size,
+                        memory().TranslatePhysical(page << page_size_log2()), page_size);
+            continue;
+          }}
+          candidate = UINT32_MAX;
+          uint8_t* saved = snapshot(page);''')
+    text = once(text, '          upload_snapshot_pages_[(page & (upload_snapshot_pages_.size() - 1))] = page;',
+        '          resident = page;')
+    path.write_text(text, encoding='utf-8', newline='\n')
 
 
 def simplify_upload_reuse_check(source):
