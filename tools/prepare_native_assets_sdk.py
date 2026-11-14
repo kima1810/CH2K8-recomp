@@ -209,7 +209,7 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
 
     shared_cpp = source/'src/graphics/shared_memory.cpp'
     text = shared_cpp.read_text(encoding='utf-8')
-    updated = patch_shared_memory_requests(text)
+    updated = patch_shared_memory_upload_merging(patch_shared_memory_requests(text))
     if updated != text:
         shared_cpp.write_text(updated, encoding='utf-8', newline='\n')
     shared_d3d12 = source/'src/graphics/d3d12/shared_memory.cpp'
@@ -230,6 +230,17 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
     updated = patch_shared_upload_stats(text)
     if updated != text:
         shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
+
+
+def patch_shared_memory_upload_merging(text):
+    marker = '// CH2K8 coalesce overlapping page uploads.'
+    if marker in text:
+        return text
+    return once(text, '''      if (last_upload_range.first + last_upload_range.second == page_start) {
+        last_upload_range.second += page_count;''', f'''      {marker}
+      const uint32_t last_end = last_upload_range.first + last_upload_range.second;
+      if (page_start <= last_end) {{
+        last_upload_range.second = std::max(last_end, page_start + page_count) - last_upload_range.first;''')
 
 
 def patch_shared_upload_stats(text):
