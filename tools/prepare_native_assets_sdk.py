@@ -217,9 +217,64 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
     updated = patch_d3d12_sparse_memory(text)
     if updated != text:
         shared_d3d12.write_text(updated, encoding='utf-8', newline='\n')
+    sparse_header = source/'include/rex/graphics/d3d12/shared_memory.h'
+    text = sparse_header.read_text(encoding='utf-8')
+    if 'sparse_heap_remaining_bytes_' not in text:
+        text = once(text, '  std::vector<ID3D12Heap*> buffer_tiled_heaps_;',
+            '  std::vector<ID3D12Heap*> buffer_tiled_heaps_;\n'
+            '  ID3D12Heap* sparse_pool_heap_ = nullptr;\n'
+            '  uint32_t sparse_heap_remaining_bytes_ = 0;')
+        sparse_header.write_text(text, encoding='utf-8', newline='\n')
 
 
 def patch_d3d12_sparse_memory(text):
+    text = patch_d3d12_sparse_memory_v1(text)
+    if 'ch2k8_pool_sparse_heaps,' in text:
+        return text
+    text = once(text, 'REXCVAR_DEFINE_INT32(ch2k8_sparse_heap_mib,', '''REXCVAR_DEFINE_BOOL(ch2k8_pool_sparse_heaps, true, "GPU/CH2K8",
+                    "Pack small D3D12 shared-memory tile mappings into 4 MiB heaps")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+REXCVAR_DEFINE_INT32(ch2k8_sparse_heap_mib,''')
+    text = once(text, '  buffer_tiled_heaps_.clear();',
+        '  buffer_tiled_heaps_.clear();\n  sparse_pool_heap_ = nullptr;\n  sparse_heap_remaining_bytes_ = 0;')
+    start = text.index('  D3D12_HEAP_DESC heap_desc = {};',
+                       text.index('bool D3D12SharedMemory::AllocateSparseHostGpuMemoryRange('))
+    end = text.index('  D3D12_TILED_RESOURCE_COORDINATE', start)
+    text = text[:start] + '''  // Physical heap offsets are independent of the guest tile addresses.
+  constexpr uint32_t pool_bytes = 4 * (1 << 20);
+  uint32_t heap_offset_bytes = 0;
+  ID3D12Heap* heap;
+  if (length_bytes <= sparse_heap_remaining_bytes_) {
+    heap = sparse_pool_heap_;
+    heap_offset_bytes = pool_bytes - sparse_heap_remaining_bytes_;
+    sparse_heap_remaining_bytes_ -= length_bytes;
+  } else {
+    const uint32_t heap_bytes = REXCVAR_GET(ch2k8_pool_sparse_heaps) && length_bytes < pool_bytes
+                                    ? pool_bytes : length_bytes;
+    D3D12_HEAP_DESC heap_desc = {};
+    heap_desc.SizeInBytes = heap_bytes;
+    heap_desc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+    heap_desc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS | provider.GetHeapFlagCreateNotZeroed();
+    if (FAILED(device->CreateHeap(&heap_desc, IID_PPV_ARGS(&heap)))) {
+      REXGPU_ERROR("Shared memory: Failed to create a tile heap");
+      return false;
+    }
+    buffer_tiled_heaps_.push_back(heap);
+    if (heap_bytes > length_bytes) {
+      sparse_pool_heap_ = heap;
+      sparse_heap_remaining_bytes_ = heap_bytes - length_bytes;
+    }
+    if (REXCVAR_GET(ch2k8_gpu_stats)) {
+      REXGPU_INFO("CH2K8 sparse shared memory allocation: {} bytes", heap_bytes);
+    }
+  }
+
+''' + text[end:]
+    return once(text, '  UINT heap_range_start_offset = 0;',
+        '  UINT heap_range_start_offset = heap_offset_bytes / D3D12_TILED_RESOURCE_TILE_SIZE_IN_BYTES;')
+
+
+def patch_d3d12_sparse_memory_v1(text):
     if 'REXCVAR_DEFINE_INT32(ch2k8_sparse_heap_mib,' in text:
         return text
     text = once(text, 'REXCVAR_DEFINE_BOOL(d3d12_tiled_shared_memory,', '''REXCVAR_DECLARE(bool, ch2k8_gpu_stats);
