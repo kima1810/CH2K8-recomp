@@ -82,7 +82,8 @@ set(CH2K8_SOURCES
 )
 
 if(WIN32)
-    add_executable(ch2k8 WIN32 ${CH2K8_SOURCES})
+    add_executable(ch2k8 WIN32 ${CH2K8_SOURCES} src/crash_report.cpp)
+    target_link_libraries(ch2k8 PRIVATE dbghelp)
 else()
     add_executable(ch2k8 ${CH2K8_SOURCES})
 endif()

@@ -122,6 +122,7 @@ function Import-Ch2k8Iso {
     $startInfo.FileName = $assetTool
     $startInfo.Arguments = $quoted -join ' '
     $startInfo.UseShellExecute = $false
+    $startInfo.EnvironmentVariables['CH2K8_CRASH_DUMP'] = [IO.Path]::ChangeExtension($logFile, '.dmp')
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true

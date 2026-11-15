@@ -94,6 +94,7 @@ REXCVAR_DEFINE_STRING(
 #include <rex/ui/vulkan/provider.h>
 #endif
 #include <windows.h>
+#include "crash_report.h"
 
 REXCVAR_DEFINE_STRING(
     ch2k8_gpu_capture, "", "CH2K8/Diagnostics",
@@ -112,6 +113,9 @@ public:
 
   static std::unique_ptr<rex::ui::WindowedApp>
   Create(rex::ui::WindowedAppContext &ctx) {
+#ifdef _WIN32
+    Ch2k8InstallCrashReporter();
+#endif
     return std::unique_ptr<Ch2k8App>(
         new Ch2k8App(ctx, "ch2k8", PPCImageConfig));
   }

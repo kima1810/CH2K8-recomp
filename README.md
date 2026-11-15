@@ -17,3 +17,17 @@ Use `-PythonExecutable "C:/path/to/python.exe"` when needed, and `-ValidateOnly`
 This is a beta targeting Windows 10/11 x64, Intel/AMD SSE4.1 CPUs and compatible graphics drivers. Full-game completion, Legacy, edited assets and additional hardware still need tester coverage. Use **Export bug report** after a failure and include reproduction steps.
 
 For the complete ISO-to-executable workflow, prerequisites, stage-by-stage recovery and compatibility limits, see [BUILDING.md](BUILDING.md). Builds automatically load the Microsoft x64 compiler environment and always save a structured failure report.
+# Crash reports on Windows
+
+The launcher writes a timestamped runtime log to the `logs` directory next to
+the game executable. On an unhandled Windows exception or CRT abort, the game
+attempts to write a same-named `.dmp` with native thread and module information.
+Open it in WinDbg with symbols from the matching build. For a report, include the
+runtime log, build revision, renderer, and steps to reproduce. Review the dump
+before sharing because it can contain process memory.
+
+With the patched source SDK, an invalid indirect guest call also logs the guest
+target, link register (caller return address), count register, and stack pointer.
+Look up the guest target and return address in the matching Xbox executable in
+Ghidra. A forced process kill or a fault before reporter initialization can leave
+only a partial runtime log.
