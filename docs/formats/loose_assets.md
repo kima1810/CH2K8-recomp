@@ -178,19 +178,16 @@ texture samplers. It uses an unambiguous geometry name when the scene preserves
 one. Texture IDs distinguish shared or unnamed materials. Lighting and other
 recognized shader data are placed in `_support/` and retain their Xbox layout.
 
-To present the editable artwork of every floor as PNG, run
-`python tools/court_artwork.py present GAME_FOLDER` after organizing the
-assets. PNG names use the verified geometry and sampler where available, with
-the original texture ID kept in the filename. LSU uses the same naming, for
-example `centerlogo_diffuse_a37a1e3d.png`. Data textures, including cubemaps,
-remain under `_support/` in their original DDS formats.
+Court artwork and support textures both use DDS. Names retain the verified
+geometry, sampler and texture ID where available. LSU's center-court logo is
+`centerlogo_diffuse_a37a1e3d.dds`. The `_support/` folders retain data maps
+and cubemaps in their original encodings.
 
-PNG editing uses Pillow and a sibling CHoops-Extractor-Reborn-Recomp checkout
-for native texture conversion. Keep the original image dimensions and channel
-layout. The launcher synchronizes edited PNG pixels into the original Xbox
-encoding. Keep `court_artwork.json` and the backing DDS files under
-`_runtime/court-artwork` with the installation. The earlier LSU-specific
-manifest and backing files are supported when migrating an existing install.
+To migrate a previous PNG layout, use
+`python tools/court_artwork.py restore-dds GAME_FOLDER --archive BACKUP_FOLDER`.
+Use a new backup folder outside the game installation. The migration applies
+pending PNG edits, archives the PNGs and restores the catalog's loose DDS paths.
+Only pending PNG edits require the existing Pillow and Studio converter.
 
 ## Native DDS
 

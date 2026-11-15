@@ -239,15 +239,65 @@ def sync(root):
     return len(outputs)
 
 
+def restore_dds(root, archive):
+    """Sync legacy PNG edits and return their catalog entries to loose DDS."""
+    if archive.is_relative_to(root) or root.is_relative_to(archive):
+        raise ValueError("PNG archive must be outside the game folder")
+    marker, entries = read_manifest(root)
+    if marker is None:
+        return 0, 0
+    if archive.exists():
+        raise ValueError(f"PNG archive already exists: {archive}")
+    catalog_path = root / "scene_textures.json"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    by_presentation = {t.get("presentation_file"): t
+                       for scene in catalog["scenes"] for t in scene["textures"]
+                       if t.get("presentation_file")}
+    plan = []
+    for entry in entries:
+        relative = entry["png"]
+        item = by_presentation[relative]
+        if item["file"] != entry["backing"]:
+            raise ValueError(f"Catalog backing differs for {relative}")
+        png = inside(root, relative)
+        dds = png.with_suffix(".dds")
+        if dds.exists():
+            raise ValueError(f"DDS destination already exists: {dds}")
+        plan.append((item, png, dds, inside(root, entry["backing"]),
+                     inside(archive, relative)))
+
+    synchronized = sync(root)
+    for item, png, dds, backing, backup in plan:
+        write(backup, png.read_bytes())
+        data = backing.read_bytes()
+        if data[:4] != b"DDS ":
+            raise ValueError(f"Invalid DDS backing: {backing}")
+        write(dds, data)
+        relative = dds.relative_to(root).as_posix()
+        item.update(file=relative, presentation_file=relative)
+    write(archive / marker.name, marker.read_bytes())
+    write_json(catalog_path, catalog)
+    marker.unlink()
+    for _, png, _, _, _ in plan:
+        png.unlink()
+    return len(plan), synchronized
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("present", "sync"))
+    parser.add_argument("action", choices=("present", "sync", "restore-dds"))
     parser.add_argument("game", type=Path)
+    parser.add_argument("--archive", type=Path)
     args = parser.parse_args()
     try:
         if args.action == "present":
             courts, artwork, renamed = present(args.game.resolve())
             print(f"{courts} courts covered, {artwork} editable PNGs created, {renamed} files renamed.")
+        elif args.action == "restore-dds":
+            if args.archive is None:
+                parser.error("restore-dds requires --archive outside the game folder")
+            restored, edited = restore_dds(args.game.resolve(), args.archive.resolve())
+            print(f"Restored {restored} DDS files and synchronized {edited} PNG edits.")
         else:
             updated = sync(args.game.resolve())
             if updated:
