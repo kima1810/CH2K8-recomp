@@ -60,6 +60,10 @@ def summarize_run(root, start=120, end=180):
         elapsed = float(process[-1]['elapsed_s'])-float(process[0]['elapsed_s'])
         result['mean_process_cpu_cores'] = ((float(process[-1]['cpu_time_s'])-float(process[0]['cpu_time_s']))/elapsed) if elapsed > 0 else None
         result['peak_sampled_working_set_bytes'] = max(int(r['working_set_bytes']) for r in process)
+        result['median_sampled_working_set_bytes'] = statistics.median(
+            int(r['working_set_bytes']) for r in process)
+        private = [int(r['private_bytes']) for r in process if r.get('private_bytes')]
+        result['median_sampled_private_bytes'] = statistics.median(private) if private else None
     sensors = [r for r in read_csv(root/'amd.csv') if start <= float(r['second']) < end]
     result['amd_raw_sensor_medians'] = {}
     for key in ('gfx_clock_raw', 'mem_clock_raw', 'gfx_activity_raw', 'edge_temp_raw',
@@ -74,14 +78,21 @@ def summarize_run(root, start=120, end=180):
     stamp = metadata.get('started')
     if stamp:
         begun = datetime.fromisoformat(stamp)
+        uploads = []
         for line in log.splitlines():
-            if 'CH2K8_GPU_CONSTANTS ' not in line:
+            if 'CH2K8_GPU_CONSTANTS ' not in line and 'CH2K8 shared uploads:' not in line:
                 continue
             timestamp = re.match(r'\[([^]]+)\]', line)
             if not timestamp:
                 continue
             elapsed = (datetime.fromisoformat(timestamp[1]).replace(tzinfo=begun.tzinfo)-begun).total_seconds()
             if not start <= elapsed < end:
+                continue
+            upload = re.search(r'CH2K8 shared uploads: (\d+) bytes in (\d+) copies', line)
+            if upload:
+                uploads.append(tuple(map(int, upload.groups())))
+                continue
+            if 'CH2K8_GPU_CONSTANTS ' not in line:
                 continue
             fields = dict(re.findall(r'(\w+)=(\S+)', line.split('CH2K8_GPU_CONSTANTS ', 1)[1]))
             mode = fields['native']
@@ -97,6 +108,12 @@ def summarize_run(root, start=120, end=180):
             for variant in ('fast', 'slow'):
                 words = totals[variant+'_words']
                 totals[variant+'_ns_per_word'] = totals[variant+'_ns']/words if words else None
+        if uploads:
+            result['shared_upload_bins'] = {
+                'samples': len(uploads),
+                'median_bytes': statistics.median(sample[0] for sample in uploads),
+                'median_copies': statistics.median(sample[1] for sample in uploads),
+            }
     result['shader_constant_bins'] = constant_totals
     result['native_readbacks'] = sorted(p.name for p in root.glob('output-*.bmp'))
     result['native_readback_checks'] = [inspect_native_readback(p) for p in sorted(root.glob('output-*.bmp'))]

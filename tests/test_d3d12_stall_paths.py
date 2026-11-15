@@ -38,6 +38,64 @@ def execute(tmp_path, program):
     subprocess.run([str(binary)], check=True)
 
 
+def test_sparse_pool_keeps_small_mappings_disjoint_across_large_allocations(sdk_source, tmp_path):
+    from prepare_native_assets_sdk import patch_d3d12_sparse_memory
+
+    source = patch_d3d12_sparse_memory(original(sdk_source, 'shared_memory'))
+    start = source.index('  // Physical heap offsets are independent')
+    end = source.index('  D3D12_TILED_RESOURCE_COORDINATE', start)
+    execute(tmp_path, r'''
+#include <cassert>
+#include <cstdint>
+#include <utility>
+#include <vector>
+#define REXCVAR_GET(flag) (flag)
+#define FAILED(status) ((status) != 0)
+#define IID_PPV_ARGS(ptr) ptr
+#define REXGPU_ERROR(...)
+#define REXGPU_INFO(...)
+enum { D3D12_HEAP_TYPE_DEFAULT, D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS };
+struct D3D12_HEAP_DESC { uint32_t SizeInBytes; struct { int Type; } Properties; int Flags; };
+struct ID3D12Heap { uint32_t bytes; };
+int main() {
+  constexpr uint32_t mib = 1 << 20;
+  constexpr bool ch2k8_pool_sparse_heaps = true, ch2k8_gpu_stats = false;
+  struct { int GetHeapFlagCreateNotZeroed() { return 0; } } provider;
+  struct Device {
+    bool fail = false;
+    int CreateHeap(const D3D12_HEAP_DESC* desc, ID3D12Heap** heap) {
+      if (fail) return 1;
+      *heap = new ID3D12Heap{desc->SizeInBytes};
+      return 0;
+    }
+  } gpu;
+  auto* device = &gpu;
+  std::vector<ID3D12Heap*> buffer_tiled_heaps_;
+  ID3D12Heap* sparse_pool_heap_ = nullptr;
+  uint32_t sparse_heap_remaining_bytes_ = 0;
+  std::pair<ID3D12Heap*, uint32_t> mapping;
+  auto allocate = [&](uint32_t length_bytes) {
+'''+source[start:end]+r'''
+    assert(heap_offset_bytes + length_bytes <= heap->bytes);
+    mapping = {heap, heap_offset_bytes};
+    return true;
+  };
+  assert(allocate(mib));
+  auto* pool = mapping.first;
+  assert(mapping.second == 0 && pool->bytes == 4 * mib);
+  gpu.fail = true;
+  assert(!allocate(7 * mib));
+  gpu.fail = false;
+  assert(allocate(7 * mib) && mapping.first != pool && mapping.second == 0);
+  assert(allocate(2 * mib) && mapping.first == pool && mapping.second == mib);
+  assert(allocate(mib) && mapping.first == pool && mapping.second == 3 * mib);
+  assert(allocate(mib) && mapping.first != pool && mapping.second == 0);
+  assert(buffer_tiled_heaps_.size() == 3);
+  for (auto* heap : buffer_tiled_heaps_) delete heap;
+}
+''')
+
+
 def test_cache_pressure_keeps_readback_slots_until_gpu_completion(sdk_source, tmp_path):
     source = patch_sync(original(sdk_source, 'command_processor'), 'd3d12')
     start = source.index('void D3D12CommandProcessor::EvictOldReadbackBuffers(')

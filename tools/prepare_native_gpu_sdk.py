@@ -200,7 +200,7 @@ REXCVAR_DEFINE_BOOL(d3d12_readback_memexport,''')
     return prefix + draw
 
 
-def patch_backend(text, backend):
+def patch_backend_vertex_fetch(text, backend):
     text = patch_backend_draw_cull(text, backend)
     marker = '// CH2K8 filter resident vertex fetches before iteration.'
     if backend != 'd3d12' or marker in text:
@@ -263,6 +263,40 @@ def patch_backend(text, backend):
       return;
     }
     memory::copy_and_swap(register_file_->values + start_index, base, num_registers);''')
+
+
+def patch_backend(text, backend):
+    text = patch_backend_vertex_fetch(text, backend)
+    if backend != 'd3d12' or '// CH2K8 batch vertex residency requests.' in text:
+        return text
+    text = replace_once(text, '  // Ensure vertex buffers are resident.\n', '''  // Ensure vertex buffers are resident.
+  // CH2K8 batch vertex residency requests. Adjacent or overlapping vertex
+  // streams can share checked pages and GPU upload commands.
+  std::pair<uint32_t, uint32_t> vertex_ranges[96];
+  uint32_t vertex_slots[96];
+  size_t vertex_range_count = 0;
+''')
+    start = text.index('      if (!shared_memory_->RequestRange(vfetch_constant.address << 2,')
+    end = text.index('  // Gather memexport ranges', start)
+    return text[:start] + '''      vertex_ranges[vertex_range_count] = {vfetch_constant.address << 2,
+                                           vfetch_constant.size << 2};
+      vertex_slots[vertex_range_count++] = vfetch_index;
+    }
+  }
+  if (vertex_range_count) {
+    if (!shared_memory_->RequestRanges(vertex_ranges, vertex_range_count)) {
+      REXGPU_ERROR("Failed to request vertex buffers in shared memory");
+      return false;
+    }
+    for (size_t i = 0; i < vertex_range_count; ++i) {
+      const uint32_t slot = vertex_slots[i];
+      vertex_buffer_states_[slot].address = vertex_ranges[i].first >> 2;
+      vertex_buffer_states_[slot].size = vertex_ranges[i].second >> 2;
+      vertex_buffers_in_sync_[slot >> 6] |= uint64_t(1) << (slot & 63);
+    }
+  }
+
+''' + text[end:]
 
 
 def patch_changed_usage(text):
@@ -389,8 +423,10 @@ def prepare_native_gpu(source):
             pre_wait_variants = tuple(patch_sync_attribution(patch(original, 'd3d12'), 'd3d12')
                 for patch in (patch_backend_v5, patch_backend_full_write, patch_backend_geometry_v1))
             pre_fetch = patch_backend_draw_cull(original, 'd3d12')
+            pre_batch = patch_backend_vertex_fetch(original, 'd3d12')
             pre_wait_variants += (pre_cull, patch_sync(pre_cull, 'd3d12'),
-                                  pre_fetch, patch_sync(pre_fetch, 'd3d12'))
+                                  pre_fetch, patch_sync(pre_fetch, 'd3d12'),
+                                  pre_batch, patch_sync(pre_batch, 'd3d12'))
             pre_pack = patch_backend_before_float_pack(original, 'd3d12')
             pre_wait_variants += (pre_pack, patch_sync_attribution(pre_pack, 'd3d12'),
                                   patch_d3d12_waits_v1(patch_sync_attribution(pre_pack, 'd3d12')),

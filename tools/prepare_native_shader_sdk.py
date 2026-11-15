@@ -312,6 +312,22 @@ def patch_pipeline_parallel(text):
 
 
 def patch_pipeline(text):
+    text = patch_pipeline_storage_flush(text)
+    start = text.index('  // Root signature.\n', text.index('bool PipelineCache::GetCurrentStateDescription('))
+    end = text.index('  // Vertex shader.\n', start)
+    root_signature = text[start:end]
+    text = text[:start] + text[end:]
+    root_signature = root_signature.replace('runtime_description_out', 'runtime_description').replace(
+        'for_placeholder', 'use_async').replace('      tessellated);',
+                                                '      primitive_processing_result.IsTessellated());')
+    return replace_once(text, '  PROFILE_PIPELINE_CACHE_MISS();\n\n  Pipeline* new_pipeline',
+        '  PROFILE_PIPELINE_CACHE_MISS();\n\n'
+        '  // Cached pipelines already own their resolved root signature.\n' +
+        root_signature.removeprefix('  // Root signature.\n') +
+        '  Pipeline* new_pipeline')
+
+
+def patch_pipeline_storage_flush(text):
     text = patch_pipeline_parallel(text)
     return replace_once(text, '      if (!shader && !write_pipeline) {\n',
         '      // Process a pending flush before sleeping, even with no more records.\n'
@@ -437,11 +453,12 @@ def prepare_native_shaders(source):
         intermediate=patch_pipeline_vertex_v1(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
         previous = patch_pipeline_native_vertex(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
         parallel = patch_pipeline_parallel(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
+        storage_flush = patch_pipeline_storage_flush(original) if relative=='src/graphics/d3d12/pipeline_cache.cpp' else expected
         geometry_initial=previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, true,','REXCVAR_DEFINE_BOOL(ch2k8_native_vertex_fetch, false,').replace('Specialize vertex byte order, index conversion and read-only memory binding','Specialize common vertex stream byte order per draw')
         older = (version[relative](original) for version in
                  (preceding, version4, version5, initial_v6, version7, version8)
                  if relative in version)
-        if path.read_text() not in (original, *older, intermediate, geometry_initial, previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), previous, parallel, expected):
+        if path.read_text() not in (original, *older, intermediate, geometry_initial, previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_full_write, false,'), previous.replace('REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, true,', 'REXCVAR_DEFINE_BOOL(ch2k8_native_depth_state, false,'), previous, parallel, storage_flush, expected):
             raise ValueError('Unreviewed shader SDK changes: '+relative)
         changes[path] = expected
     for path, expected in changes.items():

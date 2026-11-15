@@ -98,8 +98,8 @@ def test_gpu_summary_keeps_unsupported_sensors_and_timing_limits(tmp_path):
         'elapsed_ms,submit_interval_ms,swap_wall_ms,swap_thread_cpu_ms\n'
         '1000,16,1,0\n120000,50,0.002,0\n121000,60,0.003,0\n')
     (tmp_path/'process.csv').write_text(
-        'elapsed_s,cpu_time_s,working_set_bytes,threads\n'
-        '120,200,1024,10\n130,230,2048,11\n')
+        'elapsed_s,cpu_time_s,working_set_bytes,threads,private_bytes\n'
+        '120,200,1024,10,4096\n130,230,2048,11,8192\n')
     (tmp_path/'amd.csv').write_text('second,gfx_clock_raw,gfx_activity_raw,throttler_raw\n'
                                  '10,200,20,0\n120,2600,80,NA\n130,2700,90,NA\n')
     (tmp_path/'runtime.log').write_text('Creating graphics pipeline state\n'
@@ -108,6 +108,8 @@ def test_gpu_summary_keeps_unsupported_sensors_and_timing_limits(tmp_path):
     assert result['guest_submissions']['submissions'] == 2
     assert result['mean_process_cpu_cores'] == 3
     assert result['peak_sampled_working_set_bytes'] == 2048
+    assert result['median_sampled_working_set_bytes'] == 1536
+    assert result['median_sampled_private_bytes'] == 6144
     assert result['amd_raw_sensor_medians']['gfx_clock_raw'] == 2650
     assert result['amd_raw_sensor_medians']['throttler_raw'] is None
     assert result['pipeline_creation_log_entries'] == 1
@@ -120,8 +122,12 @@ def test_gpu_constant_bins_use_log_timestamps_and_weight_packet_work(tmp_path):
     (tmp_path/'run.json').write_text(json.dumps({'started':'2026-11-01T10:00:00-05:00'}))
     (tmp_path/'runtime.log').write_text(
         '[2026-11-01 10:00:01.000] CH2K8_GPU_CONSTANTS native=true single=999 ranges=0 words=999 skipped=999 skipped_words=999 float_uploads=999 system_uploads=999 bool_uploads=0\n'
-        '[2026-11-01 10:02:10.000] CH2K8_GPU_CONSTANTS native=true single=10 ranges=2 words=100 skipped=6 skipped_words=50 float_uploads=4 system_uploads=2 bool_uploads=1 fast_words=40 slow_words=60 fast_ns=80 slow_ns=360 fast_packets=2 slow_packets=3\n')
-    totals = summarize_run(tmp_path)['shader_constant_bins']['true']
+        '[2026-11-01 10:02:10.000] CH2K8_GPU_CONSTANTS native=true single=10 ranges=2 words=100 skipped=6 skipped_words=50 float_uploads=4 system_uploads=2 bool_uploads=1 fast_words=40 slow_words=60 fast_ns=80 slow_ns=360 fast_packets=2 slow_packets=3\n'
+        '[2026-11-01 10:00:01.000] CH2K8 shared uploads: 100000 bytes in 6 copies\n'
+        '[2026-11-01 10:02:11.000] CH2K8 shared uploads: 8192 bytes in 2 copies\n')
+    report = summarize_run(tmp_path)
+    assert report['shared_upload_bins'] == {'samples': 1, 'median_bytes': 8192, 'median_copies': 2}
+    totals = report['shader_constant_bins']['true']
     assert totals['bins'] == 1 and totals['skipped_request_fraction'] == 0.5
     assert totals['fast_ns_per_word'] == 2 and totals['slow_ns_per_word'] == 6
     assert totals['float_uploads'] == 4
