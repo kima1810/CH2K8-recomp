@@ -2,6 +2,7 @@
 #include "codec.h"
 inline std::string extension(uint32_t type) {
   switch (type) {
+  case 0x5c36fb69:
   case 0x5c369069:
     return "txtr";
   case 0xe26c9b5d:
@@ -12,10 +13,56 @@ inline std::string extension(uint32_t type) {
     return "rost";
   case 0x68b693b2:
     return "name";
+  case 0x513e89ef:
+    return "anim";
   case 0xa7701f00:
     return "cdan";
   case 0x1aedda1f:
     return "audo";
+  case 0x249fd2c9:
+    return "amcr";
+  case 0x1ade2460:
+    return "aoss";
+  case 0x61df2234:
+    return "ausb";
+  case 0x79862464:
+    return "blrb";
+  case 0x3b62ecd8:
+    return "cred";
+  case 0xed586383:
+    return "drct";
+  case 0x5dbcca93:
+    return "fgct";
+  case 0xe601e566:
+    return "font";
+  case 0xbe981e93:
+    return "frfg";
+  case 0x6b3aff68:
+    return "htaj";
+  case 0x02e91c4a:
+    return "kern";
+  case 0x4c997ffb:
+    return "manu";
+  case 0xc6ed33a2:
+    return "mrks";
+  case 0x26c22aed:
+    return "priv";
+  case 0x0fa31f4d:
+    return "scos";
+  case 0x047c8c98:
+    return "shap";
+  case 0x76129ad8:
+    return "sidx";
+  case 0x7657ab8a:
+    return "skel";
+  case 0x2a5bf88c:
+    return "smcd";
+  case 0x4014b412:
+    return "spci";
+  case 0xf37c12d9:
+    return "strg";
+  case 0x1a511857:
+    return "unlk";
   }
   return hex(type);
 }

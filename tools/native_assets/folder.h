@@ -85,6 +85,7 @@ inline J augment(const fs::path &root, J m) {
 struct Folder {
   fs::path root;
   J manifest, compat;
+  std::map<fs::path, fs::path> component_overrides;
   std::map<uint32_t, J> layouts, entries;
   explicit Folder(fs::path r)
       : root(longpath(fs::canonical(longpath(r)))),
@@ -238,15 +239,34 @@ struct Folder {
     if (ref.contains("texture")) {
       require(kind == 0xe26c9b5d && data.size() == 2,
               "Not a split Xbox scene texture");
-      auto slot = num(ref["texture"]), count = uint64_t(be(data[0], 0x20)),
-           table = 0x24ull + be(data[0], 0x24) - 1;
-      require(slot < count && table <= data[0].size() &&
-                  count * 224 <= data[0].size() - table,
-              "Scene texture exceeds descriptor table");
+      auto slot = num(ref["texture"]), count = uint64_t(be(data[0], 0x20));
+      require(slot < count, "Missing scene texture slot");
+      auto table = scene_texture_table(data[0], count);
       data[0] = sub(data[0], table + slot * 224, 224);
       kind = 0x5c369069;
     }
     return {kind, std::move(data)};
+  }
+  std::vector<fs::path> scene_components(const J &e, const J &r) {
+    std::vector<fs::path> files;
+    if (r.contains("component_files")) {
+      for (auto &c : r["component_files"])
+        if (!c["path"].is_null())
+          files.push_back(contained(root, c["folder"].get<std::string>() +
+                                              "/" + c["path"].get<std::string>()));
+    } else {
+      const auto &l = layout(e);
+      for (size_t j = 0; j < r["offsets"].size(); ++j)
+        for (auto &c : l["blocks"][j]["components"])
+          if (num(c["start"]) == num(r["offsets"][j]))
+            files.push_back(contained(root, e["folder"].get<std::string>() +
+                                                "/" + c["path"].get<std::string>()));
+    }
+    return files;
+  }
+  fs::path runtime_component(const fs::path &original) const {
+    auto it = component_overrides.find(original);
+    return it == component_overrides.end() ? original : it->second;
   }
   J zero(uint64_t n) {
     std::string relative = "_runtime/padding/" + std::to_string(n) + ".pad";
@@ -268,7 +288,9 @@ struct Folder {
       J segments = J::array();
       uint64_t cursor = 0;
       for (auto &s : l["loose_segments"]) {
-        auto file = contained(folder, s["path"]);
+        auto file = runtime_component(s.contains("resource_file")
+            ? contained(root, s["resource_file"])
+            : contained(folder, s["path"]));
         auto n = fs::file_size(file);
         require(num(s["offset"]) == cursor && num(s["size"]) == n,
                 "Loose paired component extent changed");
@@ -329,7 +351,7 @@ struct Folder {
         });
         for (auto &c : cs) {
           require(num(c["start"]) == logical, "Loose component gap or overlap");
-          auto f = contained(folder, c["path"]);
+          auto f = runtime_component(contained(folder, c["path"]));
           auto n = fs::file_size(f), old = num(c["end"]) - num(c["start"]);
           if (n != old) {
             bool roster = l["records"].size() == 1 &&

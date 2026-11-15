@@ -82,7 +82,7 @@ try {
             if(-not (Test-Path -LiteralPath (Join-Path $gameData 'assets.json')) -or -not (Test-Path -LiteralPath (Join-Path $gameData 'default.xex')) -or (Get-FileHash -LiteralPath (Join-Path $gameData 'default.xex')).Hash.ToLowerInvariant() -ne $expected){throw 'Existing ISO installation is incomplete or incompatible. It was left untouched. Pass -InstallDirectory with a new folder to retry.'}
             Invoke-BuildCommand 'asset-prepare' $native @('prepare',$gameData)
         }else{
-            Invoke-BuildCommand 'iso-assets' $native @('import',$Source,$gameData,'--progress-file',(Join-Path (Split-Path -Parent $LogFile) 'asset-progress.json')) 'The game executable is already built. Check the importer error/free disk space. Retry with -InstallDirectory on a drive with room for decoded assets; use -CodeOnly if you only need the executable.'
+            Invoke-BuildCommand 'iso-assets' $native @('import',$Source,$gameData,'--named-assets','--progress-file',(Join-Path (Split-Path -Parent $LogFile) 'asset-progress.json')) 'The game executable is already built. Check the importer error/free disk space. Retry with -InstallDirectory on a drive with room for decoded assets; use -CodeOnly if you only need the executable.'
         }
         Invoke-BuildCommand 'runtime-map' $native @('validate-runtime',$gameData)
     }

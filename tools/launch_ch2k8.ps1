@@ -112,7 +112,7 @@ function Import-Ch2k8Iso {
     $cancelFile = Join-Path $jobFolder 'cancel'
     $outputFile = Join-Path $jobFolder 'result.json'
     $errorFile = Join-Path $jobFolder 'import.log'
-    $parameters = @('import', $Image, $Destination,
+    $parameters = @('import', $Image, $Destination, '--named-assets',
         '--progress-file', $progressFile, '--cancel-file', $cancelFile)
     foreach ($argument in $parameters) { if ($argument.Contains('"')) { throw 'Paths must not contain double quotes.' } }
     $quoted = $parameters | ForEach-Object { ConvertTo-NativeArgument $_ }
@@ -288,6 +288,11 @@ function Start-Ch2k8 {
     if (Get-Process ch2k8 -ErrorAction SilentlyContinue) { throw 'CH2K8 is already running.' }
     $rootArgument = $Configuration.arguments | Where-Object { $_.StartsWith('--game_data_root=') }
     $assetRoot = $rootArgument.Substring('--game_data_root='.Length)
+    if (Test-Path -LiteralPath (Join-Path $assetRoot 's258_artwork.json') -PathType Leaf) {
+        $python = (Get-Command python.exe -ErrorAction Stop).Source
+        & $python (Join-Path $PSScriptRoot 's258_artwork.py') sync $assetRoot
+        if ($LASTEXITCODE -ne 0) { throw 'Could not synchronize the LSU artwork PNG files.' }
+    }
     if (Test-Path -LiteralPath (Join-Path $assetRoot 'assets.json')) {
         if ($Configuration.arguments -contains '--ch2k8_renderer=vulkan') {
             throw 'Native DDS replacement currently requires Direct3D 12. Choose D3D12 for the folder installation.'

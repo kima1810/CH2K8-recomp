@@ -22,7 +22,7 @@ J inspect(Disc &disc, Archive &archive, const std::string &expected, Job &job) {
            {"supported", true}};
 }
 J import_game(const fs::path &image, const fs::path &destination, Job &job,
-              const std::string &expected) {
+              const std::string &expected, bool named) {
   auto output = longpath(destination);
   require(!fs::exists(output), "Installation folder already exists; existing "
                                "folders are never overwritten");
@@ -95,6 +95,12 @@ J import_game(const fs::path &image, const fs::path &destination, Job &job,
     job.update(done, done, "Splitting paired Xbox resources...");
     materialize(game, manifest, job, false);
     job.update(done, done, "Validating native loose resource maps...");
+    if (named) {
+      Folder layout(game);
+      name_assets(layout, job);
+    }
+    Folder folder(game);
+    export_scene_textures(folder, job, named);
     prepare(game, job);
     jsonwrite(game / L"iso-validation.json", validation);
     job.update(done, done, "Finalizing loose asset installation...");
@@ -174,9 +180,35 @@ int wmain(int argc, wchar_t **argv) {
         write(output, disc.member("default.xex", 0, disc.size("default.xex")));
       }
       result["xex"] = utf8(output);
+    } else if (pos[0] == "export-scene-textures") {
+      require(pos.size() == 2, "Usage: export-scene-textures GAME_FOLDER");
+      Folder folder(path(pos[1]));
+      require(!fs::exists(folder.root / L"scene_textures.json"),
+              "Scene DDS catalog already exists");
+      result = export_scene_textures(folder, job);
+    } else if (pos[0] == "refresh-texture-catalog") {
+      require(pos.size() == 2 || pos.size() == 3,
+              "Usage: refresh-texture-catalog GAME_FOLDER [BANK_FOLDER]");
+      Folder folder(path(pos[1]));
+      require(fs::exists(folder.root / L"scene_textures.json"),
+              "Organize this installation before refreshing its textures");
+      auto bank = pos.size() == 3 ? "assets/" + pos[2] : std::string();
+      require(bank.empty() || std::any_of(folder.entries.begin(), folder.entries.end(),
+                   [&](const auto &entry) { return entry.second.at("folder") == bank.c_str(); }),
+              "Texture refresh bank is missing");
+      result = export_scene_textures(folder, job, true, bank);
+    } else if (pos[0] == "organize-assets") {
+      require(pos.size() == 2, "Usage: organize-assets GAME_FOLDER");
+      Folder folder(path(pos[1]));
+      validate_tree(folder.root, job);
+      name_assets(folder, job);
+      Folder named(folder.root);
+      result = export_scene_textures(named, job, true);
+      result["runtime"] = prepare(named.root, job);
     } else if (pos[0] == "import") {
-      require(pos.size() == 3, "Usage: import ISO NEW_FOLDER");
-      result = import_game(path(pos[1]), path(pos[2]), job, expected);
+      require(pos.size() == 3 || (pos.size() == 4 && pos.back() == "--named-assets"),
+              "Usage: import ISO NEW_FOLDER [--named-assets]");
+      result = import_game(path(pos[1]), path(pos[2]), job, expected, pos.size() == 4);
     } else if (pos[0] == "prepare") {
       require(pos.size() == 2, "Usage: prepare GAME_FOLDER");
       result = prepare(path(pos[1]), job);

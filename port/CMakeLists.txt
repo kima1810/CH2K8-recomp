@@ -55,7 +55,7 @@ set(CH2K8_GAME_SOURCE "" CACHE FILEPATH "Xbox ISO or extracted disc directory fo
 set(CH2K8_ASSET_DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/out/folder-game" CACHE PATH "New folder installation directory")
 if(CH2K8_GAME_SOURCE)
     add_custom_target(ch2k8_import_assets
-        COMMAND $<TARGET_FILE:ch2k8_tools> import "${CH2K8_GAME_SOURCE}" "${CH2K8_ASSET_DESTINATION}"
+        COMMAND $<TARGET_FILE:ch2k8_tools> import "${CH2K8_GAME_SOURCE}" "${CH2K8_ASSET_DESTINATION}" --named-assets
         DEPENDS ch2k8_tools
         USES_TERMINAL VERBATIM)
 endif()
