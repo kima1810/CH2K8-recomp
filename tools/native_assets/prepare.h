@@ -191,6 +191,8 @@ inline J export_scene_textures(Folder &f, Job &job, bool named = false,
         if (auto prior = previous.find({id, index, slot}); prior != previous.end()) {
           auto item = prior->second;
           if (item.contains("presentation_file")) {
+            info.erase("usage");
+            item.update(info);
             textures.push_back(std::move(item));
             continue;
           }

@@ -79,27 +79,35 @@ inline std::map<unsigned, std::set<std::string>> scene_geometry_names(
     for (unsigned i = 0; i < count; ++i) {
       auto mesh = table + i * 176;
       auto bias = int32_t(be(cpu, mesh));
-      if (!bias || bias == -1)
-        continue;
+      auto hash = be(cpu, mesh + 4);
       auto begin = int64_t(mesh) + bias - 1;
-      if (begin < 0 || uint64_t(begin) >= cpu.size())
-        continue;
       std::string name;
-      auto end = uint64_t(begin);
-      for (; end + 1 < cpu.size() && end - begin < 128; end += 2) {
-        auto c = cpu[end + 1];
-        if (!cpu[end] && !c)
-          break;
-        if (cpu[end] || (!(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') &&
-            !(c >= '0' && c <= '9') && c != '_' && c != '-' && c != '.')) {
-          name.clear();
-          break;
+      if (bias && bias != -1 && begin >= 0 && uint64_t(begin) < cpu.size()) {
+        auto end = uint64_t(begin);
+        for (; end + 1 < cpu.size() && end - begin < 128; end += 2) {
+          auto c = cpu[end + 1];
+          if (!cpu[end] && !c)
+            break;
+          if (cpu[end] || (!(c >= 'a' && c <= 'z') && !(c >= 'A' && c <= 'Z') &&
+              !(c >= '0' && c <= '9') && c != '_' && c != '-' && c != '.')) {
+            name.clear();
+            break;
+          }
+          name += char(c);
         }
-        name += char(c);
+        if (end + 1 >= cpu.size() || cpu[end] || cpu[end + 1] ||
+            resource_crc(name) != hash)
+          name.clear();
       }
-      if (name.empty() || end + 1 >= cpu.size() || cpu[end] || cpu[end + 1] ||
-          resource_crc(name) != be(cpu, mesh + 4))
-        continue;
+      if (name.empty()) {
+        static const std::map<uint32_t, const char *> verified{
+            {0xbe45d62e, "floor"}, {0x577a8417, "paint"},
+            {0x0c093d16, "centerlogo"}, {0x4f018c96, "lines"}};
+        if (auto known = verified.find(hash); known != verified.end())
+          name = known->second;
+        else
+          continue;
+      }
       auto draws = be(cpu, mesh + 0x7c), indices = be(cpu, mesh + 0xa8);
       auto pointer = int32_t(be(cpu, mesh + 0x80));
       auto draw_start = int64_t(mesh) + 0x7f + pointer;

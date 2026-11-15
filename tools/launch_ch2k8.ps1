@@ -288,10 +288,10 @@ function Start-Ch2k8 {
     if (Get-Process ch2k8 -ErrorAction SilentlyContinue) { throw 'CH2K8 is already running.' }
     $rootArgument = $Configuration.arguments | Where-Object { $_.StartsWith('--game_data_root=') }
     $assetRoot = $rootArgument.Substring('--game_data_root='.Length)
-    if (Test-Path -LiteralPath (Join-Path $assetRoot 's258_artwork.json') -PathType Leaf) {
+    if ((Test-Path -LiteralPath (Join-Path $assetRoot 'court_artwork.json') -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $assetRoot 's258_artwork.json') -PathType Leaf)) {
         $python = (Get-Command python.exe -ErrorAction Stop).Source
-        & $python (Join-Path $PSScriptRoot 's258_artwork.py') sync $assetRoot
-        if ($LASTEXITCODE -ne 0) { throw 'Could not synchronize the LSU artwork PNG files.' }
+        & $python (Join-Path $PSScriptRoot 'court_artwork.py') sync $assetRoot
+        if ($LASTEXITCODE -ne 0) { throw 'Could not synchronize the court artwork PNG files.' }
     }
     if (Test-Path -LiteralPath (Join-Path $assetRoot 'assets.json')) {
         if ($Configuration.arguments -contains '--ch2k8_renderer=vulkan') {

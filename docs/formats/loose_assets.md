@@ -178,15 +178,19 @@ texture samplers. It uses an unambiguous geometry name when the scene preserves
 one. Texture IDs distinguish shared or unnamed materials. Lighting and other
 recognized shader data are placed in `_support/` and retain their Xbox layout.
 
-The LSU bank includes the center-court logo in texture `a37a1e3d`. To set up
-PNG editing for the verified LSU floor and arena artwork, run
-`python tools/s258_artwork.py present GAME_FOLDER` after organizing the assets.
-This optional workflow uses Pillow and a sibling CHoops-Extractor-Reborn-Recomp
-checkout for native texture conversion. Edit the PNG at its original dimensions.
-The launcher synchronizes the edited pixels into the original Xbox encoding.
-Keep the backing files under `_runtime/s258-artwork` with the installation.
-The marked court masks and other support textures live in each scene's
-`_support/` folder.
+To present the editable artwork of every floor as PNG, run
+`python tools/court_artwork.py present GAME_FOLDER` after organizing the
+assets. PNG names use the verified geometry and sampler where available, with
+the original texture ID kept in the filename. LSU uses the same naming, for
+example `centerlogo_diffuse_a37a1e3d.png`. Data textures, including cubemaps,
+remain under `_support/` in their original DDS formats.
+
+PNG editing uses Pillow and a sibling CHoops-Extractor-Reborn-Recomp checkout
+for native texture conversion. Keep the original image dimensions and channel
+layout. The launcher synchronizes edited PNG pixels into the original Xbox
+encoding. Keep `court_artwork.json` and the backing DDS files under
+`_runtime/court-artwork` with the installation. The earlier LSU-specific
+manifest and backing files are supported when migrating an existing install.
 
 ## Native DDS
 
