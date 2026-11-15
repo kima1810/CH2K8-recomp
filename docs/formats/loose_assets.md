@@ -244,6 +244,20 @@ field edit. Check native upload log lines. The game was not launched during work
 
 ## Baseline references
 
+### Default Xbox import layout
+
+Fresh imports from an Xbox ISO or extracted disc use the named layout
+automatically. The importer resolves bank names by Xbox filename CRC, including
+world and selection variants of alternate uniforms, shoes, and cloth. It
+resolves internal resources by record CRC, using names found in the shipped SCNE
+strings where available. Unresolved names retain their hashes.
+
+Court SCNEs keep their geometry and material labels on editable DDS files.
+The same artwork and `_support` classification applies to every court, with
+verified exceptions matched to their bank, scene, slot, and texture IDs.
+The native import command accepts `--legacy-layout` for tools that require the
+old numbered resource folders.
+
 ### Paired component update
 
 Fresh direct imports split paired CPU/GPU resources into decoded component files,

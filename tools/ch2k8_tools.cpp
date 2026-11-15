@@ -206,9 +206,11 @@ int wmain(int argc, wchar_t **argv) {
       result = export_scene_textures(named, job, true);
       result["runtime"] = prepare(named.root, job);
     } else if (pos[0] == "import") {
-      require(pos.size() == 3 || (pos.size() == 4 && pos.back() == "--named-assets"),
-              "Usage: import ISO NEW_FOLDER [--named-assets]");
-      result = import_game(path(pos[1]), path(pos[2]), job, expected, pos.size() == 4);
+      require(pos.size() == 3 || (pos.size() == 4 &&
+                  (pos.back() == "--named-assets" || pos.back() == "--legacy-layout")),
+              "Usage: import DISC NEW_FOLDER [--legacy-layout]");
+      result = import_game(path(pos[1]), path(pos[2]), job, expected,
+                           pos.back() != "--legacy-layout");
     } else if (pos[0] == "prepare") {
       require(pos.size() == 2, "Usage: prepare GAME_FOLDER");
       result = prepare(path(pos[1]), job);

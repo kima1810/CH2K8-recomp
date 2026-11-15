@@ -21,9 +21,35 @@ inline const std::map<uint32_t, std::string> &resource_names() {
          "floor_logo", "floor_wood", "court", "lines", "wood", "lightmap",
          "logo", "centerlogo", "scoreboard", "scorebug", "sponsors"})
       result.emplace(resource_crc(name), name);
+    for (std::string name : {"shoe_upper", "shoe_sole", "unif", "short",
+                             "midsole_mat", "upper_mat", "toe_mat", "heel_mat",
+                             "logo_mat", "hitop_mat", "fastener_mat"})
+      result.emplace(resource_crc(name), name);
+    for (auto height : {"hi", "lo"})
+      for (unsigned number = 1; number <= 4; ++number) {
+        auto name = std::string(height) + "_shoe" + std::to_string(number);
+        result.emplace(resource_crc(name), name);
+      }
+    for (auto build : {"thin", "reg", "fat"}) {
+      auto name = std::string("shorts") + build;
+      result.emplace(resource_crc(name), name);
+      for (auto shape : {"u", "v", "vtri", "tri", "wishbone"}) {
+        name = std::string("jersey_") + shape + "_" + build;
+        result.emplace(resource_crc(name), name);
+      }
+    }
     for (unsigned i = 0; i < 1000; ++i) {
       auto name = "logo" + decpad(i, 3);
       result.emplace(resource_crc(name), name);
+    }
+    for (std::string name : {
+#include "embedded_record_names.inc"
+    }) {
+      const auto id = resource_crc(name);
+      for (auto &c : name)
+        if (c >= 'A' && c <= 'Z')
+          c = char(c - 'A' + 'a');
+      result.emplace(id, name);
     }
     return result;
   }();

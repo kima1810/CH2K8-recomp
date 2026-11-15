@@ -1,6 +1,35 @@
 #pragma once
 #include "named_layout.h"
 #include "scene_image.h"
+
+// Verified court artwork exceptions to the shared Xbox format and material rule.
+// Match all four identifiers so a different scene or texture keeps the default.
+inline bool court_texture_support(uint32_t bank, uint32_t record, uint32_t slot,
+                                  uint32_t texture, bool default_support) {
+  struct Placement {
+    uint32_t bank, record, slot, texture;
+    bool support;
+  };
+  static constexpr Placement placements[] = {
+      {0x3975fa24, 9, 2, 0xb3151c0e, true},   // s013 floor
+      {0x42ab980a, 1, 9, 0xaadcd2be, true},  // s258 arena
+      {0x42ab980a, 1, 18, 0xff1c08c9, true},
+      {0x42ab980a, 1, 21, 0xcd85219f, true},
+      {0x42ab980a, 1, 24, 0x7857b3a2, true},
+      {0x42ab980a, 1, 25, 0xe61dc45a, true},
+      {0x42ab980a, 1, 26, 0x63a021c2, true},
+      {0x42ab980a, 1, 30, 0xc518ad48, false},
+      {0x42ab980a, 1, 40, 0xe7ba9d70, true},
+      {0x42ab980a, 9, 2, 0xb7cb594f, true},  // s258 floor
+      {0x42ab980a, 9, 10, 0xcba9122e, true},
+      {0xfea11aac, 9, 13, 0x9f39fccc, true}, // s302 floor
+  };
+  for (const auto &entry : placements)
+    if (entry.bank == bank && entry.record == record && entry.slot == slot &&
+        entry.texture == texture)
+      return entry.support;
+  return default_support;
+}
 inline J discover(Folder &f) {
   J edits = J::array();
   for (auto &[id, e] : f.entries)
@@ -180,6 +209,7 @@ inline J export_scene_textures(Folder &f, Job &job, bool named = false,
             support = fmt == 10 || fmt == 49 || fmt == 59 || fmt == 60 ||
                 (it != labels.end() && !it->second.roles.contains("diffuse") &&
                                        !it->second.roles.contains("color"));
+            support = court_texture_support(id, index, slot, texid, support);
             if (it != labels.end()) {
               info["roles"] = it->second.roles;
               info["geometry"] = it->second.meshes;
