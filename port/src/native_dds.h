@@ -66,7 +66,7 @@ class NativeDDSCatalog {
     if(choices){
       if(!std::getline(choices,line) || line!="CH2K8_PRESENTATION_DDS_V1")throw std::runtime_error("Invalid conditional DDS catalog");
       while(std::getline(choices,line)){
-        if(line.empty() || line.size()>220 || conditional_.size()>=3)throw std::runtime_error("Invalid conditional DDS entry");
+        if(line.empty() || line.size()>220 || conditional_.size()>=6)throw std::runtime_error("Invalid conditional DDS entry");
         if(!conditional_.insert(line).second)throw std::runtime_error("Duplicate conditional DDS entry");
       }
       if(choices.bad() || conditional_.size()<2)throw std::runtime_error("Button Style requires the primary and stick atlases");

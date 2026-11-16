@@ -20,8 +20,10 @@ namespace ch2k8 {
 class LooseArchive {
  public:
   struct Range { uint64_t offset, size; std::string path; };
-  explicit LooseArchive(const std::filesystem::path& root, bool verify_files = true)
-      : root_(NativePath(std::filesystem::canonical(NativePath(root)))) {
+  using ReadTrace = void (*)(std::string_view);
+  explicit LooseArchive(const std::filesystem::path& root, bool verify_files = true,
+                        ReadTrace trace = nullptr)
+      : root_(NativePath(std::filesystem::canonical(NativePath(root)))), trace_(trace) {
     std::ifstream overlay(root_ / "stock-root.txt");
     if (overlay) {
       std::string base;
@@ -76,6 +78,7 @@ class LooseArchive {
         if (files_.size()>=64) files_.clear();
         auto stream=std::make_unique<std::ifstream>(CheckedComponent(*it),std::ios::binary);
         if (!*stream) throw std::runtime_error("Cannot open loose asset: "+it->path);
+        if (trace_) trace_(it->path);
         found=files_.emplace(it->path,std::move(stream)).first;
       }
       auto& stream=*found->second;
@@ -113,6 +116,7 @@ class LooseArchive {
   }
   std::filesystem::path root_;
   std::filesystem::path stock_;
+  ReadTrace trace_;
   uint64_t total_=0;
   std::vector<Range> parts_,ranges_;
   std::mutex mutex_;

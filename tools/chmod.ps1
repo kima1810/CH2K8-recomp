@@ -120,11 +120,12 @@ function Read-Chmod([string]$Root) {
         Assert-ModText $kind '^(dds\.replace|cloth\.(?:positions|simulation)|court\.scene)$'
         if($kind -cnotin @('dds.replace','cloth.positions','cloth.simulation','court.scene')){throw 'Unsupported asset capability.'}
         if('selection' -cin $a.PSObject.Properties.Name){
+            $globalButtonAtlases=@{0=0x001d1bcfL;190=0x4ffa5eb9L;270=0x7542283fL;410=0xacc6d118L;512=0xd948c961L}
+            $globalAtlas=$a.bank_hash -eq 3680386632L -and $a.record_index -le 512 -and
+                $globalButtonAtlases[[int]$a.record_index] -eq $a.record_id
+            $passAtlas=$a.bank_hash -eq 1823768513L -and $a.record_index -eq 142 -and $a.record_id -eq 0x969565e4L
             if($a.selection -cne 'presentation.playstation' -or $kind -cne 'dds.replace' -or $m.requires.mod_api -cne '1.3.0' -or
-               $a.bank_hash -ne 3680386632L -or $a.record_index -notin @(270,410,512) -or
-               ($a.record_index -eq 270 -and $a.record_id -ne 1967269951L) -or
-               ($a.record_index -eq 410 -and $a.record_id -ne 2898710808L) -or
-               ($a.record_index -eq 512 -and $a.record_id -ne 0xd948c961L)) {throw 'Conditional DDS selection requires a researched global.iff button atlas and API 1.3.'}
+               (-not $globalAtlas -and -not $passAtlas)) {throw 'Conditional DDS selection requires a known Button Style atlas and API 1.3.'}
         }
         $expectedCaps+=$kind
         $slotBound='texture_slot' -cin $a.PSObject.Properties.Name
@@ -238,7 +239,11 @@ function Read-Chmod([string]$Root) {
     $choices=@($m.assets|Where-Object{$_.selection})
     $buttonProvider=@($m.extensions|Where-Object{'hook.presentation.button_style' -cin $_.capabilities})
     if($choices.Count -or $buttonProvider.Count){
-        if((($choices.record_index|Sort-Object) -join ',') -cnotin @('270,410','270,410,512') -or $buttonProvider.Count -ne 1){throw 'Button Style requires one SDK provider, the primary and stick atlases, and an optional navigation atlas.'}
+        $choiceIndices=@($choices.record_index)
+        if(270 -notin $choiceIndices -or 410 -notin $choiceIndices -or
+           @($choiceIndices|Sort-Object -Unique).Count -ne $choices.Count -or $buttonProvider.Count -ne 1){
+            throw 'Button Style requires one SDK provider and one entry per selected controller atlas.'
+        }
     }
     if((@($m.capabilities|Sort-Object) -join ',') -cne ($expectedCaps -join ',')){throw 'Capabilities must exactly describe the supported content.'}
     if($m.requires.mod_api -ceq '1.0.0' -and ($expectedCaps -join ',') -cne 'dds.replace'){throw 'New data capabilities require mod API 1.1.0.'}
@@ -544,7 +549,7 @@ function Resolve-Chmods([string]$Game, [string]$ModsRoot, $Selection, [string]$E
                 $sceneEdits[$ownerKey]=$true
                 $r=$record[0]
                 $count=if($kind -ceq 'court.scene'){2}else{1}
-                if($r.offsets.Count -ne $count -or $layout.blocks.Count -ne $count){throw 'Unexpected SCNE component layout.'}
+                if($r.offsets.Count -ne $count -or $layout.blocks.Count -lt $count){throw 'Unexpected SCNE component layout.'}
                 $index=[int]$a.component
                 $offset=$r.offsets[$index]
                 $component=@($layout.blocks[$index].components | Where-Object {$_.start -eq $offset})
@@ -767,7 +772,7 @@ function New-ChmodCache([string]$Game, [string]$CacheRoot, $Plan, [scriptblock]$
         }else{& $Prepare $stage}
         $choices=@($Plan.replacements|Where-Object{$_.selection -ceq 'presentation.playstation'}|Sort-Object target)
         if($choices.Count){
-            if($choices.Count -notin @(2,3)){throw 'Conditional Button Style atlases are incomplete.'}
+            if($choices.Count -lt 2 -or $choices.Count -gt 6){throw 'Conditional Button Style atlases are incomplete.'}
             [IO.File]::WriteAllLines((Join-Path $stage 'native_dds_choices.index'),@('CH2K8_PRESENTATION_DDS_V1')+@($choices|ForEach-Object{$_.target}),[Text.UTF8Encoding]::new($false))
         }
         Write-ModJson (Join-Path $stage 'chmod-lock.json') ([ordered]@{mod_api='1.2.0';baseline=$Game;active=$Plan.active;replacements=$Plan.replacements;conflicts=$Plan.conflicts;roster=$Plan.roster;uniforms=@($Plan.uniforms|ForEach-Object{[ordered]@{name=$_.name;hash=$_.hash;mod=$_.mod;files=$_.files}})})

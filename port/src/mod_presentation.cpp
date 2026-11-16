@@ -29,6 +29,7 @@ REX_EXTERN(__imp__sub_847DC530);
 REX_EXTERN(__imp__sub_848635D8);
 REX_EXTERN(__imp__sub_84863460);
 REX_EXTERN(__imp__sub_84746438);
+REX_EXTERN(__imp__sub_84D275A0);
 
 void Ch2k8PreparePresentation(rex::Runtime& r){runtime=&r;}
 void Ch2k8EnablePresentation(){
@@ -139,3 +140,24 @@ REX_HOOK_RAW(sub_847DC530){
  __imp__sub_847DC530(ctx,base);
 }
 void Ch2k8PublishPresentation(){std::lock_guard lock(menu_mutex);select(CHMOD_BUTTON_STYLE_QUERY);}
+
+REX_HOOK_RAW(sub_84D275A0) {
+ constexpr uint32_t XboxControllerScene = 0x525ca356;
+ constexpr uint32_t PlayStationControllerScene = 0x4d0b8a4f;
+ constexpr uint32_t SceneType = 0xe26c9b5d;
+ // Controller Setup's LAYT requests the Xbox SCNE by name each time it
+ // instantiates the menu. Use the complete PS3 scene so its callout
+ // geometry, labels and controller illustration agree.
+ if (ctx.r5.u32 == XboxControllerScene && ctx.r6.u32 == SceneType &&
+     style.load(std::memory_order_relaxed) == 1) {
+  const auto original = ctx;
+  ctx.r5.u64 = PlayStationControllerScene;
+  __imp__sub_84D275A0(ctx, base);
+  if (ctx.r3.u32) {
+   REXLOG_INFO("CHMOD Controller Setup selected PlayStation scene");
+   return;
+  }
+  ctx = original;
+ }
+ __imp__sub_84D275A0(ctx, base);
+}

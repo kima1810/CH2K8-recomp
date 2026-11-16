@@ -78,8 +78,16 @@ inline J validate_court_scene(const fs::path& source_cpu, const fs::path& source
         word(params(i) + 180, 0);
       if (full_resolution)
         georgia_artwork_descriptor(expected);
-      if (full_resolution && changed_cpu != expected)
+      if (full_resolution && changed_cpu != expected) {
         for (size_t part : {3456, 3632, 3808}) word(part + 0x7C, 0);
+        if (changed_cpu != expected) {
+          // The last draw in the lines mesh uses the lighting material.
+          // Point the draw list at that run alone, leaving its bytes intact.
+          constexpr size_t lines = 3808, draw_pointer = lines + 0x80;
+          word(lines + 0x7C, 1);
+          word(draw_pointer, be(cpu, draw_pointer) + 6 * 48);
+        }
+      }
       require(changed_cpu == expected, "Court SCNE changes unsupported CPU metadata");
       stock_passes = true;
     }

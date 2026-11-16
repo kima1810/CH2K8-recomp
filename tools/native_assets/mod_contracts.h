@@ -182,6 +182,8 @@ inline J vanilla_uniform_routes(const fs::path& game) {
 inline J validate_cloth_positions(const fs::path& original, const fs::path& replacement) {
   auto b=read(original,64ull<<20), changed=read(replacement,64ull<<20);
   require(b.size()==changed.size(),"SCNE position edits must preserve component size");
+  const bool bench_shorts = b.size() == 274176 &&
+      sha(b) == "fcec1c9c54dfb0fd122dee18ccab6d2a85a1bb319d842bc29160770e4caf97fd";
   bounds(b,0,0xb0); auto count=be(b,0x44);
   require(count && count<=4096,"Unsupported embedded-cloth mesh count");
   auto table=relative_pointer(b,0x48); bounds(b,table,uint64_t(count)*176);
@@ -214,6 +216,26 @@ inline J validate_cloth_positions(const fs::path& original, const fs::path& repl
     auto indices=be(b,part+0xa8); require(indices && indices<=2000000,"Cloth index count exceeds limit");
     auto ib=relative_pointer(b,part+0xac); bounds(b,ib,uint64_t(indices)*2);
     for(uint32_t j=0;j<indices;++j){auto index=(unsigned(b[ib+j*2])<<8)|b[ib+j*2+1]; require(index==65535 || index<vertices,"Cloth index outside source vertices");}
+    if (bench_shorts) {
+      // The inline bench mesh combines shorts, jersey, skin and shoes. The
+      // pinned source has no vertices shared between the shorts and other draws.
+      const auto shorts = relative_pointer(b, part + 0x80) + 48;
+      require(be(b, shorts + 32) == 1, "Expected the bench shorts material");
+      const auto first = be(b, shorts + 4), length = be(b, shorts + 8);
+      require(first <= indices && length <= indices - first, "Invalid bench shorts draw range");
+      for (uint32_t j = first; j < first + length; ++j) {
+        const auto vertex = (unsigned(b[ib + 2*j]) << 8) | b[ib + 2*j + 1];
+        if (vertex == 65535) continue;
+        const auto off = start + uint64_t(vertex) * stride + 4;
+        const float old_y = std::bit_cast<float>(be(b, off));
+        const float new_y = std::bit_cast<float>(be(changed, off));
+        require(std::isfinite(new_y) && new_y >= old_y && new_y <= old_y + 12.0f,
+                "Bench shorts hem exceeds the supported range");
+        for (unsigned byte = 0; byte < 4; ++byte) allowed[off + byte] = true;
+      }
+      vertices_total += vertices;
+      continue;
+    }
     for(uint32_t j=0;j<vertices;++j) for(unsigned k=0;k<3;++k) {
       auto off=start+uint64_t(j)*stride+k*4;
       auto value=std::bit_cast<float>(be(changed,off));
@@ -238,10 +260,7 @@ inline J validate_cloth_rest(const fs::path &original, const fs::path &replaceme
           "Unsupported Xbox shorts rest-position resource");
   constexpr size_t start = 0xb0, count = 800, stride = 8;
   constexpr uint64_t y_mask = 0xfffffull << 20;
-  require(std::equal(stock.begin(), stock.begin() + start, edited.begin()) &&
-          std::equal(stock.begin() + start + count * stride, stock.end(),
-                     edited.begin() + start + count * stride),
-          "Shorts simulation changes non-position data");
+  auto expected = stock;
   size_t changed = 0;
   auto signed_y = [](uint64_t word) {
     return int32_t(((word >> 20) & 0xfffff) ^ 0x80000) - 0x80000;
@@ -253,7 +272,37 @@ inline J validate_cloth_rest(const fs::path &original, const fs::path &replaceme
     require(((old ^ next) & ~y_mask) == 0 &&
             std::abs(signed_y(old) - signed_y(next)) <= 12 * 2048,
             "Unsupported shorts rest-position change");
+    put(expected, offset, uint32_t(next >> 32));
+    put(expected, offset + 4, uint32_t(next));
     changed += old != next;
   }
-  return J{{"ready", true}, {"positions", count}, {"changed", changed}};
+
+  // Xbox schedules two distance constraints per 12-byte record. Endpoints
+  // and flags remain fixed. Each length has nine bits and a separate enable bit.
+  const size_t first = 0x1f + be(stock, 0x20);
+  const size_t end = 0x17 + be(stock, 0x18);
+  size_t constraints = 0;
+  for (size_t offset = first; offset + 12 <= end; offset += 12) {
+    const auto endpoints = be(stock, offset);
+    const auto packed = be(stock, offset + 4);
+    auto updated = packed;
+    const auto next = be(edited, offset + 4);
+    for (unsigned lane = 0; lane < 2; ++lane) {
+      const unsigned shift = lane * 10;
+      const auto particle = (lane ? packed : endpoints) >> 20;
+      const auto delta = (endpoints >> (lane ? 0 : 10)) & 1023u;
+      const auto length = (packed >> shift) & 511u;
+      const auto new_length = (next >> shift) & 511u;
+      if (new_length == length) continue;
+      require((packed & (512u << shift)) && length && new_length &&
+              delta && particle + delta < count,
+              "Unsupported shorts distance constraint change");
+      updated = (updated & ~(511u << shift)) | (new_length << shift);
+      ++constraints;
+    }
+    put(expected, offset + 4, updated);
+  }
+  require(expected == edited, "Shorts simulation changes unsupported data");
+  return J{{"ready", true}, {"positions", count}, {"changed", changed},
+           {"changed_constraints", constraints}};
 }
