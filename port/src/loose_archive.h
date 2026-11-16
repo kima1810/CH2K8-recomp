@@ -20,7 +20,19 @@ namespace ch2k8 {
 class LooseArchive {
  public:
   struct Range { uint64_t offset, size; std::string path; };
-  explicit LooseArchive(const std::filesystem::path& root) : root_(NativePath(std::filesystem::canonical(NativePath(root)))) {
+  explicit LooseArchive(const std::filesystem::path& root, bool verify_files = true)
+      : root_(NativePath(std::filesystem::canonical(NativePath(root)))) {
+    std::ifstream overlay(root_ / "stock-root.txt");
+    if (overlay) {
+      std::string base;
+      if (!std::getline(overlay, base) || base.empty()) throw std::runtime_error("Invalid stock asset root");
+      auto supplied = std::filesystem::u8path(base);
+      if (!supplied.is_absolute()) throw std::runtime_error("Stock asset root must be absolute");
+      stock_ = NativePath(std::filesystem::canonical(NativePath(supplied)));
+      if (stock_ == root_ || !std::filesystem::is_regular_file(stock_ / "assets.map") ||
+          !std::filesystem::is_regular_file(stock_ / "default.xex"))
+        throw std::runtime_error("Invalid stock asset installation");
+    }
     std::ifstream input(root_ / "assets.map");
     std::string line;
     if (!std::getline(input,line) || line != "CH2K8_LOOSE_V1") throw std::runtime_error("Invalid assets.map version");
@@ -42,8 +54,7 @@ class LooseArchive {
         parts_.push_back(range); part_end+=range.size;
       } else if (kind=="S") {
         if (range.offset!=covered) throw std::runtime_error("Scatter map has a gap or overlap");
-        auto full=CheckedPath(path);
-        if (std::filesystem::file_size(full)!=range.size) throw std::runtime_error("Loose component size differs from map: "+path);
+        if (verify_files) CheckedComponent(range);
         ranges_.push_back(range); covered+=range.size;
       } else throw std::runtime_error("Unknown map row");
     }
@@ -51,6 +62,7 @@ class LooseArchive {
     total_=covered;
   }
   const std::vector<Range>& parts() const { return parts_; }
+  const std::vector<Range>& ranges() const { return ranges_; }
   size_t Read(uint64_t offset, std::span<uint8_t> output) {
     std::lock_guard lock(mutex_);
     if (offset>=total_ || output.empty()) return 0;
@@ -62,7 +74,7 @@ class LooseArchive {
       auto found=files_.find(it->path);
       if (found==files_.end()) {
         if (files_.size()>=64) files_.clear();
-        auto stream=std::make_unique<std::ifstream>(CheckedPath(it->path),std::ios::binary);
+        auto stream=std::make_unique<std::ifstream>(CheckedComponent(*it),std::ios::binary);
         if (!*stream) throw std::runtime_error("Cannot open loose asset: "+it->path);
         found=files_.emplace(it->path,std::move(stream)).first;
       }
@@ -75,15 +87,32 @@ class LooseArchive {
     return done;
   }
  private:
+  std::filesystem::path CheckedComponent(const Range& range) const {
+    auto full=CheckedPath(range.path);
+    if (std::filesystem::file_size(full)!=range.size)
+      throw std::runtime_error("Loose component size differs from map: "+range.path);
+    return full;
+  }
   std::filesystem::path CheckedPath(const std::string& relative) const {
-    const auto supplied=std::filesystem::u8path(relative);
+    std::string_view name(relative);
+    const auto *root = &root_;
+    if (name.starts_with("@stock/")) {
+      name.remove_prefix(7);
+      if (stock_.empty() || !(name.starts_with("assets/") || name.starts_with("_runtime/")))
+        throw std::runtime_error("Invalid stock asset path");
+      root = &stock_;
+    }
+    const auto supplied=std::filesystem::u8path(name);
     if (supplied.is_absolute() || supplied.has_root_name()) throw std::runtime_error("Absolute loose asset path");
-    auto full=NativePath(std::filesystem::canonical(NativePath(root_/supplied)));
-    auto rel=full.lexically_relative(root_);
+    auto full=NativePath(std::filesystem::canonical(NativePath(*root/supplied)));
+    auto rel=full.lexically_relative(*root);
     if (rel.empty() || *rel.begin()=="..") throw std::runtime_error("Loose asset path escapes installation");
+    if (root == &stock_ && *rel.begin() != "assets" && *rel.begin() != "_runtime")
+      throw std::runtime_error("Stock asset path escapes its asset directories");
     return full;
   }
   std::filesystem::path root_;
+  std::filesystem::path stock_;
   uint64_t total_=0;
   std::vector<Range> parts_,ranges_;
   std::mutex mutex_;

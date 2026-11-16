@@ -258,6 +258,18 @@ verified exceptions matched to their bank, scene, slot, and texture IDs.
 The native import command accepts `--legacy-layout` for tools that require the
 old numbered resource folders.
 
+### Recovered Xbox asset names
+
+The loose importer uses uppercase filename CRCs for Xbox banks and
+case-sensitive CRCs for records. Its naming tables include world and selection
+uniforms, cloth and shoes, and identifiers recovered from SCNE strings. A bank
+or record without a verified match retains its hash in the directory name.
+
+Run `python tools/recover_asset_names.py <game-folder>` to preview renames on
+an existing loose Xbox installation. Add `--apply` to migrate the paths and
+update their metadata and indexes. The migration writes
+`asset_path_aliases.json` so the mod loader can resolve older asset paths.
+
 ### Paired component update
 
 Fresh direct imports split paired CPU/GPU resources into decoded component files,

@@ -40,6 +40,13 @@ def prepare(source):
         ['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
     if revision != PIN:
         raise ValueError(f'Expected pinned SDK {PIN}, got {revision}')
+    cmake=source/'CMakeLists.txt'
+    text=cmake.read_text(encoding='utf-8')
+    if '# CH2K8 configurable SDK outputs' not in text:
+        old='\n'.join(f'set(CMAKE_{kind}_OUTPUT_DIRECTORY "${{REXGLUE_ROOT}}/out/${{REX_PLATFORM}}")' for kind in ('RUNTIME','LIBRARY','ARCHIVE'))
+        if text.count(old)!=1:raise ValueError('Unrecognized pinned SDK output-directory site')
+        new='# CH2K8 configurable SDK outputs\nset(REXGLUE_OUTPUT_DIRECTORY "${REXGLUE_ROOT}/out/${REX_PLATFORM}" CACHE PATH "SDK artifact directory")\n'+'\n'.join(f'set(CMAKE_{kind}_OUTPUT_DIRECTORY "${{REXGLUE_OUTPUT_DIRECTORY}}")' for kind in ('RUNTIME','LIBRARY','ARCHIVE'))
+        cmake.write_text(text.replace(old,new),encoding='utf-8',newline='\n')
     prepare_native_gpu(source)
     prepare_native_shaders(source)
     prepare_native_vertex(source)

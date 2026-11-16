@@ -10,3 +10,5 @@ xbox360,0x84DCB0C8,FUN_84DCB0C8,CONFIRMED,Contains verified VdSwap call at 0x84D
 xbox360,0x84F5A6BC,VdSwap,CONFIRMED,Original 0x84DCB314 branch target matched to generated VdSwap import; name is not speculative
 xbox360,0x8471B0A8,FUN_8471B0A8,CONFIRMED,Observed missing callback after tip-off; li r3 zero and tail branch to 0x84718B80 verified read-only in Ghidra
 xbox360,0x8471B0B0,FUN_8471B0B0,CONFIRMED,Verified sibling callback; li r3 zero and tail branch to 0x84718B90; not runtime-observed
+xbox360,0x84752968,PlayerWeightRead,RESEARCHED,Ghidra read-only disassembly and generated getter extract9bits shift5 at anchor+140; Studio Xbox field metadata identifies weight; SDK adapter compiled only no gameplay observation
+xbox360,0x848425D8,PlayerWeightWrite,RESEARCHED,Ghidra read-only disassembly and generated setter insert r4 low9bits shift5 at anchor+140; SDK typed setter adapter compiled only no gameplay observation

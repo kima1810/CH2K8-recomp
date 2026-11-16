@@ -144,6 +144,66 @@ def test_default_import_recovers_bank_and_record_names(tmp_path):
     assert run('validate-runtime', game).returncode == 0
 
 
+def test_unchanged_assets_reuse_preparation_and_changes_invalidate_it(tmp_path):
+    source = tmp_path / 'disc'
+    fixture_disc(source, 'texture')
+    game = tmp_path / 'game'
+    imported = run('import', source, game, '--expected-xex-sha256', IDENTITY)
+    assert imported.returncode == 0, imported.stderr
+
+    def reused():
+        result = run('prepare-if-needed', game)
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)['reused']
+
+    assert reused()
+    dds = next((game / 'assets').rglob('texture.dds'))
+    updated = bytearray(dds.read_bytes())
+    updated[128] ^= 255
+    dds.write_bytes(updated)
+    assert not reused()
+    assert len((game / 'native_dds.index').read_text().splitlines()) == 2
+    assert reused()
+    (game / 'native_dds.index').unlink()
+    assert not reused()
+    assert reused()
+
+
+def test_sparse_overlay_reuses_untouched_bank_without_copying_it(tmp_path):
+    source = tmp_path / 'disc'
+    fixture_disc(source, 'standard')
+    archive = source / '0A'
+    image = bytearray(archive.read_bytes())
+    stock_payload = b'untouched stock bank'
+    stock_hash = 0xff112233
+    stock_sector = len(image) // 2048
+    assert len(image) % 2048 == 0 and struct.unpack_from('>I', image, 16)[0] == 1
+    image.extend(stock_payload + bytes(2048 - len(stock_payload)))
+    struct.pack_into('>I', image, 16, 2)
+    struct.pack_into('>I', image, 24, len(image) // 2048)
+    struct.pack_into('>4I', image, 56, stock_hash, stock_sector, 0, len(stock_payload))
+    archive.write_bytes(image)
+    baseline = tmp_path / 'base'
+    result = run('import', source, baseline, '--expected-xex-sha256', IDENTITY)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads((baseline / 'assets.json').read_text())
+    edited = next(entry['folder'] for entry in manifest['entries'] if entry['hash'] != stock_hash)
+    stage = tmp_path / 'stage'
+    request = tmp_path / 'request.json'
+    request.write_text(json.dumps([edited]))
+    result = run('initialize-overlay', baseline, stage, request)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['eligible']
+    shutil.copytree(baseline / edited, stage / edited)
+    shutil.copyfile(baseline / 'default.xex', stage / 'default.xex')
+    result = run('prepare-overlay', stage, baseline)
+    assert result.returncode == 0, result.stderr
+    assert not (stage / 'assets/hash_ff112233.iff').exists()
+    assert '@stock/assets/hash_ff112233.iff/payload.dat' in (stage / 'assets.map').read_text()
+    result = run('validate-runtime', stage)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize('encoding', ['bc', 'raw', 'ctx1'])
 def test_scene_dds_rebuild_targets_the_slot_without_changing_scene_files(tmp_path, encoding):
     from xbox_texture import export_dds

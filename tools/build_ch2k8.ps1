@@ -91,6 +91,7 @@ try {
     $ready=[bool]($gameData -and ((Test-Path -LiteralPath (Join-Path $gameData '0A')) -or (Test-Path -LiteralPath (Join-Path $gameData 'assets.map'))))
     $result=@{executable=(Join-Path $BuildDirectory 'ch2k8.exe');game_data=$gameData;data_ready=$ready;source_kind=$kind;python=$python;log=$LogFile;status=$global:Ch2k8BuildContext.status}
     if(-not (Test-Path -LiteralPath $result.executable)){throw 'Build completed without the expected ch2k8.exe. Inspect CMake output and the selected build directory.'}
+    & (Join-Path $PSScriptRoot 'write_mod_runtime_receipt.ps1') -BuildDirectory $BuildDirectory
     $state=Join-Path $repo 'port/userdata';$null=New-Item -ItemType Directory -Path $state -Force
     $result|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $state 'build-result.json') -Encoding UTF8
     if($gameData){@{game_data=$gameData;renderer='d3d12';executable=$result.executable}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $state 'launcher.json') -Encoding UTF8}

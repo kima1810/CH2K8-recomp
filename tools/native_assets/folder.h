@@ -1,5 +1,6 @@
 #pragma once
 #include "import_layout.h"
+#include "court_contract.h"
 inline J augment(const fs::path &root, J m) {
   auto marker = root / L"asset_edits.json";
   J reg = fs::exists(marker) ? json(marker)
@@ -358,8 +359,38 @@ struct Folder {
                           num(l["records"][0]["type"]) == 0xc61649b2 &&
                           cs.size() == 1 && num(c["start"]) == 0 &&
                           num(c["end"]) == num(b["logical"]);
-            require(roster && n >= old && n % 2 == 0 && n <= 64ull << 20,
-                    "Unsupported loose resource resizing");
+            const bool georgia_floor = num(e["hash"]) == GeorgiaBank &&
+                num(b["index"]) == 1 && c["path"] == "floor.scne/scene_gpu.dat" &&
+                old == GeorgiaGpuSize && n == old + GeorgiaArtworkSize;
+            if (georgia_floor) {
+              auto gpu = read(f, GeorgiaGpuSize + GeorgiaArtworkSize);
+              require(sha(std::span(gpu).first(GeorgiaGpuSize)) == GeorgiaStockGpu,
+                      "Expanded Georgia floor changed the original GPU region");
+              // The bump TXTR is the only record following this SCNE in block 1.
+              // Move its offset while leaving its pixel bytes and CPU header intact.
+              const auto table = 27u + be(header, 28);
+              unsigned moved = 0;
+              for (const auto &record : l["records"]) {
+                if (record["offsets"].size() < 2)
+                  continue;
+                const auto previous = num(record["offsets"][1]);
+                if (previous < num(c["end"]) || previous == UINT32_MAX)
+                  continue;
+                const auto field = table + 4 * num(record["index"]);
+                const auto row = field + be(header, field) - 1;
+                require(num(record["id"]) == GeorgiaBumpRecord &&
+                        be(header, row) == GeorgiaBumpRecord &&
+                        be(header, row + 16) == previous &&
+                        previous == num(c["end"]), "Unexpected Georgia bump offset");
+                bounds(header, row + 16, 4);
+                put(header, row + 16, previous + GeorgiaArtworkSize);
+                ++moved;
+              }
+              require(moved == 1, "Missing Georgia bump texture after the floor");
+            } else {
+              require(roster && n >= old && n % 2 == 0 && n <= 64ull << 20,
+                      "Unsupported loose resource resizing");
+            }
           }
           if (n)
             seg.push_back(J{{"offset", cursor},
@@ -400,13 +431,14 @@ struct Folder {
     seg[0]["path"] = final;
     return J{{"size", cursor}, {"segments", seg}};
   }
-  J plan(Job &job) {
+  J plan(Job &job, const std::map<uint32_t, J> &stock = {}) {
     std::vector<std::pair<J, J>> views;
     uint64_t done = 0;
     for (auto &e : manifest["entries"]) {
       job.update(done++, manifest["entries"].size(),
                  "Validating native loose resource maps...");
-      views.push_back({e, bank(e)});
+      auto saved = stock.find(uint32_t(num(e["hash"])));
+      views.push_back({e, saved == stock.end() ? bank(e) : saved->second});
     }
     uint64_t partsize = num(compat["part_size"]);
     require(partsize && partsize % 2048 == 0,

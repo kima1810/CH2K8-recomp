@@ -1,0 +1,185 @@
+{
+  "version": 2,
+  "mod_api": "1.3.0",
+  "extension_abis": [
+    1,
+    2
+  ],
+  "xex_sha256": "71e8983d1cc009e485696aad19b5fa4b4661761870e2c8972717b932c1e4be36",
+  "native_extensions_supported": true,
+  "capabilities": [
+    "hook.player.weight.read",
+    "hook.player.weight.write",
+    "lifecycle.runtime.ready",
+    "lifecycle.runtime.stopping",
+    "data.player.weight.read",
+    "data.player.weight.pending_write",
+    "hook.presentation.button_style"
+  ],
+  "package_hooks": [
+    {
+      "id": "player.weight.read",
+      "numeric_id": 1,
+      "version": 1,
+      "abi": 1,
+      "abis": [
+        1,
+        2
+      ],
+      "guest_address": "84752968",
+      "arguments": "ChmodWeightReadArgs",
+      "result": "ChmodWeightReadResult",
+      "operations": [
+        "before",
+        "after",
+        "replace",
+        "result",
+        "original"
+      ],
+      "contract": "Borrowed player; observe before, transform result100..400 after; exclusive replacement/original once.",
+      "thread": "guest caller; concurrent",
+      "lifetime": "callback only",
+      "persistence": "indirect guest consumers may persist derived results",
+      "evidence": [
+        "generated ch2k8_recomp.12.cpp",
+        "Ghidra 2026-11-08 weight-disassembly.txt",
+        "Studio xbox_player_fields.json"
+      ],
+      "status": "Researched",
+      "implemented": true,
+      "compiled": true,
+      "structurally_validated": false,
+      "in_game_verified": false
+    },
+    {
+      "id": "player.weight.write",
+      "numeric_id": 2,
+      "version": 1,
+      "abi": 2,
+      "abis": [
+        2
+      ],
+      "guest_address": "848425D8",
+      "arguments": "ChmodWeightWriteArgs",
+      "result": null,
+      "operations": [
+        "before",
+        "after",
+        "replace",
+        "arguments",
+        "original"
+      ],
+      "contract": "Transform pounds100..400 before; after observe; replacement may skip or call original once. Persistent mutation.",
+      "thread": "guest caller; concurrent",
+      "lifetime": "callback only",
+      "persistence": "writes packed player property; game may save it",
+      "evidence": [
+        "generated ch2k8_recomp.96.cpp",
+        "Ghidra 2026-11-08 weight-disassembly.txt",
+        "Studio xbox_player_fields.json"
+      ],
+      "status": "Researched",
+      "implemented": true,
+      "compiled": true,
+      "structurally_validated": false,
+      "in_game_verified": false
+    },
+    {
+      "id": "runtime.ready",
+      "numeric_id": 3,
+      "version": 1,
+      "abi": 2,
+      "abis": [
+        2
+      ],
+      "arguments": null,
+      "result": null,
+      "operations": [
+        "after"
+      ],
+      "contract": "Host OnPostSetup after all initialization, before guest launch; observe only.",
+      "thread": "host setup thread",
+      "lifetime": "callback only; no objects",
+      "persistence": "none directly",
+      "evidence": [
+        "main.cpp OnPostSetup",
+        "SDK rex_app.cpp setup/launch ordering"
+      ],
+      "status": "Researched",
+      "implemented": true,
+      "compiled": true,
+      "structurally_validated": false,
+      "in_game_verified": false
+    },
+    {
+      "id": "runtime.stopping",
+      "numeric_id": 4,
+      "version": 1,
+      "abi": 2,
+      "abis": [
+        2
+      ],
+      "arguments": null,
+      "result": null,
+      "operations": [
+        "after"
+      ],
+      "contract": "Host OnShutdown after mod callback drain; not a guest save/exit event; observe only.",
+      "thread": "host shutdown thread",
+      "lifetime": "callback only; no objects",
+      "persistence": "none directly",
+      "evidence": [
+        "main.cpp OnShutdown",
+        "SDK rex_app.cpp OnDestroy"
+      ],
+      "status": "Researched",
+      "implemented": true,
+      "compiled": true,
+      "structurally_validated": false,
+      "in_game_verified": false
+    },
+    {
+      "id": "presentation.button_style",
+      "numeric_id": 5,
+      "version": 1,
+      "abi": 2,
+      "abis": [
+        2
+      ],
+      "guest_address": "847DC530",
+      "arguments": "ChmodButtonStyleArgs",
+      "result": "ChmodButtonStyleResult",
+      "operations": [
+        "before",
+        "after",
+        "result"
+      ],
+      "contract": "Native Options/Presentation Button Style: immutable query/toggle args; after-transform returns Xbox=0 or PlayStation=1. Requires paired conditional DDS assets. One package provider; original fallback Xbox.",
+      "thread": "host setup QUERY before guest launch; native menu caller for QUERY/TOGGLE; serialized by adapter",
+      "lifetime": "callback-scoped values only; no game object handles",
+      "persistence": "host-owned preference under isolated native-mod user_data_root; no native save edits",
+      "evidence": [
+        "generated sub_847DC530 / sub_847E0668 / sub_847D9E50 / sub_847D9E60",
+        "generated sub_848635D8 / sub_84864758 / sub_84D5A028",
+        "docs/findings/2026-11-08-presentation-button-style.md"
+      ],
+      "status": "Researched",
+      "implemented": true,
+      "compiled": true,
+      "structurally_validated": false,
+      "in_game_verified": false
+    }
+  ],
+  "domains": {
+    "application_lifecycle": "host ready/stopping available",
+    "player_data": "weight getter/setter only",
+    "session_game_save_lifecycle": "research required",
+    "gameplay_rules": "research required",
+    "team_roster_conference": "research required for executable SDK; native roster tooling separate",
+    "simulation_generated_content": "research required",
+    "season_competition_scheduling": "research required",
+    "ui_text_presentation": "native Presentation Button Style row only; other UI requires research",
+    "input_navigation": "research required",
+    "frame_timing": "existing diagnostics only, not public hooks"
+  }
+}

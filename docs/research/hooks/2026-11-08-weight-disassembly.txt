@@ -1,0 +1,16 @@
+Xbox USA XEX SHA256 71e8983d1cc009e485696aad19b5fa4b4661761870e2c8972717b932c1e4be36
+Ghidra 12.2, existing default.xex project, readOnly/noanalysis, DumpPpcRange.java
+2026-11-08. Static disassembly only, no game execution or performance measurement.
+84752968 8163008c lwz r11,0x8c(r3)
+8475296c 5563ddfe rlwinm r3,r11,0x1b,0x17,0x1f
+84752970 4e800020 blr
+848425d8 8163008c lwz r11,0x8c(r3)
+848425dc 508b2cb4 rlwimi r11,r4,0x5,0x12,0x1a
+848425e0 9163008c stw r11,0x8c(r3)
+848425e4 4e800020 blr
+Interpretation: getter extracts9bits at5; setter inserts r4 low9bits at5.
+Semantic weight identity/menu100..400 is independently recorded in Studio Xbox
+field metadata. Context r3 anchor+140 corresponds to roster row+156 with bias16.
+Not proof of physics/simulation/recruiting usage or a performance optimization.
+No generated direct callers found for these two symbols; map/descriptor references
+exist. Direct symbolic interception is provided by strong/weak symbol resolution.

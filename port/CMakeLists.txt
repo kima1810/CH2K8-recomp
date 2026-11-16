@@ -10,6 +10,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(cmake/Ch2k8BuildOptions.cmake)
 
 find_package(Python3 3.11 REQUIRED COMPONENTS Interpreter)
+add_custom_command(OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/src/mod_hook_inventory.inc"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_mod_inventory.py"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../tools/generate_mod_inventory.py"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../sdk/hooks.json"
+    VERBATIM)
 add_library(ch2k8_asset_codec SHARED ../tools/asset_codec.cpp)
 add_executable(ch2k8_tools ../tools/ch2k8_tools.cpp ../tools/asset_codec.cpp)
 target_sources(ch2k8_tools PRIVATE third_party/miniz/miniz.c)
@@ -82,8 +87,9 @@ set(CH2K8_SOURCES
 )
 
 if(WIN32)
+    list(APPEND CH2K8_SOURCES src/mod_extensions.cpp src/mod_framework.cpp src/mod_presentation.cpp src/mod_hook_inventory.inc)
     add_executable(ch2k8 WIN32 ${CH2K8_SOURCES} src/crash_report.cpp)
-    target_link_libraries(ch2k8 PRIVATE dbghelp)
+    target_link_libraries(ch2k8 PRIVATE dbghelp bcrypt)
 else()
     add_executable(ch2k8 ${CH2K8_SOURCES})
 endif()
@@ -102,6 +108,9 @@ target_compile_definitions(ch2k8 PRIVATE CH2K8_VERSION="${PROJECT_VERSION}")
 get_target_property(CH2K8_RUNTIME_INCLUDES rex::runtime INTERFACE_INCLUDE_DIRECTORIES)
 set(CH2K8_NATIVE_DDS_AVAILABLE 0)
 foreach(CH2K8_INCLUDE IN LISTS CH2K8_RUNTIME_INCLUDES)
+    if(CH2K8_INCLUDE MATCHES "^\\$<BUILD_INTERFACE:(.*)>$")
+        set(CH2K8_INCLUDE "${CMAKE_MATCH_1}")
+    endif()
     if(EXISTS "${CH2K8_INCLUDE}/rex/graphics/native_dds.h")
         set(CH2K8_NATIVE_DDS_AVAILABLE 1)
     endif()
@@ -110,6 +119,7 @@ target_compile_definitions(ch2k8 PRIVATE CH2K8_HAS_NATIVE_DDS=${CH2K8_NATIVE_DDS
 if(WIN32)
     # Preserve the generated code's line tables in a PDB for startup debugging.
     target_link_options(ch2k8 PRIVATE "LINKER:/DEBUG:FULL" "LINKER:/INCREMENTAL:NO")
+    target_link_options(ch2k8 PRIVATE "LINKER:/MAP:$<TARGET_FILE:ch2k8>.map")
 endif()
 
 # SDK 0.10.0.24 emits a 32-bit cast before a 44-bit arithmetic shift for

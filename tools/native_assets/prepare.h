@@ -1,6 +1,7 @@
 #pragma once
 #include "named_layout.h"
 #include "scene_image.h"
+#include "../../port/src/loose_archive.h"
 
 // Verified court artwork exceptions to the shared Xbox format and material rule.
 // Match all four identifiers so a different scene or texture keeps the default.
@@ -357,7 +358,44 @@ inline size_t apply_scene_textures(Folder &f, Job &job) {
   return edited;
 }
 
-inline J prepare(const fs::path &source, Job &job) {
+inline std::map<uint32_t, J> stock_bank_views(const fs::path &base,
+                                            const std::map<uint32_t, J> &edited) {
+  ch2k8::LooseArchive archive(base, false);
+  const auto &ranges = archive.ranges();
+  auto toc = read(contained(base, ranges.at(0).path));
+  require(be(toc, 0) == 0xaa00b3bf && be(toc, 4) == 2048 &&
+          be(toc, 8) == archive.parts().size(), "Invalid stock archive catalog");
+  auto table = 24 + archive.parts().size() * 16;
+  auto count = be(toc, 16);
+  bounds(toc, table, count * 16ull);
+  std::map<uint32_t, J> views;
+  for (unsigned i = 0; i < count; ++i) {
+    const auto row = table + 16 * i;
+    const auto id = be(toc, row);
+    if (edited.contains(id))
+      continue;
+    const auto start = uint64_t(be(toc, row + 4)) * 2048;
+    const auto size = be(toc, row + 12);
+    auto pos = std::lower_bound(ranges.begin(), ranges.end(), start,
+        [](const auto &range, uint64_t value) { return range.offset < value; });
+    J segments = J::array();
+    uint64_t cursor = 0;
+    while (cursor < size) {
+      require(pos != ranges.end() && pos->offset == start + cursor &&
+              pos->size <= size - cursor &&
+              (pos->path.starts_with("assets/") || pos->path.starts_with("_runtime/")),
+              "Stock bank differs from its prepared asset map");
+      segments.push_back(J{{"offset", cursor}, {"size", pos->size},
+                           {"path", "@stock/" + pos->path}});
+      cursor += pos++->size;
+    }
+    require(views.emplace(id, J{{"size", size}, {"segments", segments}}).second,
+            "Duplicate stock bank identity");
+  }
+  return views;
+}
+
+inline J prepare(const fs::path &source, Job &job, const fs::path &stock = {}) {
   auto root = longpath(fs::canonical(longpath(source)));
   validate_tree(root, job);
   auto original = json(root / L"assets.json");
@@ -378,7 +416,9 @@ inline J prepare(const fs::path &source, Job &job) {
     identities[k] = digest;
     return fresh;
   };
+  uint64_t checked_banks = 0;
   for (auto &[id, e] : f.entries) {
+    job.update(checked_banks++, f.entries.size(), "Checking DDS files in prepared banks...");
     job.check();
     const auto &l = f.layout(e);
     for (auto &t : l.value("textures", J::array())) {
@@ -485,8 +525,53 @@ inline J prepare(const fs::path &source, Job &job) {
     } else
       throw std::runtime_error("Unsupported native edit kind");
   }
+  job.update(0, 0, "Preparing edited scene textures...");
   auto scene_edits = apply_scene_textures(f, job);
-  auto plan = f.plan(job);
+  std::map<uint32_t, J> stock_views;
+  if (!stock.empty()) {
+    auto base_manifest = json(stock / L"assets.json");
+    stock_views = stock_bank_views(stock, f.entries);
+    // A direct DDS binding is selected by pixel identity, not by IFF name.
+    // Never let a mod overwrite the same identity in an unmodified owner.
+    std::set<std::string> changed_keys;
+    for (const auto &row : dds_rows)
+      changed_keys.insert(row.substr(0, row.rfind('\t')));
+    J entries = J::array();
+    uint64_t checked = 0;
+    for (const auto &entry : base_manifest.at("entries")) {
+      if (!changed_keys.empty() && checked % 32 == 0)
+        job.update(checked, base_manifest.at("entries").size(), "Checking shared stock texture identities...");
+      ++checked;
+      const auto id = uint32_t(num(entry.at("hash")));
+      if (f.entries.contains(id)) {
+        entries.push_back(f.entries.at(id));
+        continue;
+      }
+      require(stock_views.contains(id), "Unprepared stock bank");
+      entries.push_back(entry);
+      if (!changed_keys.empty()) {
+        const auto layout = json(contained(stock, entry.at("folder")) / L"asset.json");
+        for (const auto &texture : layout.value("textures", J::array())) {
+          const auto &info = texture.at("descriptor");
+          require(!changed_keys.contains(key(unsigned(num(info["width"])),
+                      unsigned(num(info["height"])), unsigned(num(info["format"])),
+                      texture.at("identity").get<std::string>())),
+                  "Conflicting native DDS identities");
+        }
+      }
+    }
+    for (const auto &entry : f.manifest.at("entries"))
+      if (entry.value("added", false)) {
+        require(std::none_of(base_manifest.at("entries").begin(),
+                 base_manifest.at("entries").end(), [&](const auto &stock_entry) {
+                   return stock_entry.at("hash") == entry.at("hash");
+                 }), "New mod bank conflicts with a stock bank");
+        entries.push_back(entry);
+      }
+    f.manifest["entries"] = std::move(entries);
+    text(root / L"stock-root.txt", utf8(stock) + "\n");
+  }
+  auto plan = f.plan(job, stock_views);
   std::string map = "CH2K8_LOOSE_V1\n";
   for (auto &p : plan["parts"])
     map += "P\t" + std::to_string(num(p["offset"])) + "\t" +
@@ -498,7 +583,7 @@ inline J prepare(const fs::path &source, Job &job) {
     std::string name = s["path"];
     require(n && num(s["offset"]) == cursor &&
                 name.find_first_of("\t\r\n") == std::string::npos &&
-                fs::file_size(contained(root, name)) == n,
+                (name.starts_with("@stock/") || fs::file_size(contained(root, name)) == n),
             "Invalid scatter-map coverage or file size");
     map += "S\t" + std::to_string(cursor) + "\t" + std::to_string(n) + "\t" +
            name + "\n";

@@ -58,7 +58,7 @@ class LooseDevice final : public HostPathDevice {
   };
  public:
   explicit LooseDevice(const std::filesystem::path& root)
-    : HostPathDevice("\\Device\\CH2K8Assets",root,true),archive_(std::make_shared<ch2k8::LooseArchive>(root)) {}
+    : HostPathDevice("\\Device\\CH2K8Assets",root,true),archive_(std::make_shared<ch2k8::LooseArchive>(root, false)) {}
   bool Initialize() override {
     // A synthetic root is essential: HostPathEntry's existence check would
     // discard virtual archive parts because no physical 0A..0M files exist.

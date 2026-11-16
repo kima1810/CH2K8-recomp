@@ -1,8 +1,9 @@
 # Findings index
 
-- [2026-11-10 Legacy mode internals](2026-11-10-legacy-mode-internals.md)
-- [2026-11-10 Menu screen system](2026-11-10-menu-screen-system.md)
-
+- [2026-11-11 Modloader integration](2026-11-11-ravensfan-modloader-integration.md) records the option-item adapter changes and Legacy SDK candidates.
+- [2026-11-10 Menu screen system](2026-11-10-menu-screen-system.md) covers navigation, layouts, bindings, options and page transitions.
+- [2026-11-10 Legacy mode internals](2026-11-10-legacy-mode-internals.md) covers coach slots, recruiting, prestige, development and conference swaps.
+- [2026-11-04 Settings menu getter](2026-11-04-settings-menu-getter.md) records the original getter missing from indirect dispatch.
 - [2026-11-10 Archive input validation](2026-11-10-archive-input-validation.md) records extraction path checks and decoder validation.
 
 - [2026-11-03 Native GPU progress waits](2026-11-03-native-gpu-progress-wait.md): bounded native address waits retain original completion and cancellation checks; same-build demo runs use about 20% less process CPU. Scene-dependent FPS limits remain.

@@ -33,3 +33,16 @@ target, link register (caller return address), count register, and stack pointer
 Look up the guest target and return address in the matching Xbox executable in
 Ghidra. A forced process kill or a fault before reporter initialization can leave
 only a partial runtime log.
+
+The reusable [C++ extension SDK](sdk/README.md) is hosted with
+[Modding Studio](https://github.com/ZMO34/CHoops-Extractor-Reborn-Recomp/tree/feat/chmod-extension-sdk/sdk),
+with [draft integration PR #3](https://github.com/ZMO34/CHoops-Extractor-Reborn-Recomp/pull/3).
+See [CHMOD API1.3](docs/formats/chmod-1.3.md) for ABI2 native extensions and
+[the implementation report](docs/findings/2026-11-08-extension-framework.md).
+Current framework/adapters/examples are compiled; runtime tests and gameplay
+verification remain pending. Native code requires explicit launcher opt-in.
+
+The launcher now includes **Update from GitHub** and **Rollback update**.
+See [runtime update documentation](docs/RUNTIME_UPDATES.md) for safe installation,
+release requirements and verification limits. The currently published older beta
+cannot downgrade the local SDK runtime. Tests/game execution remain user-run.

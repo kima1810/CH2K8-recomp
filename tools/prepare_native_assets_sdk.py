@@ -170,6 +170,50 @@ void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
 ''' + text[end:]
         header.write_text(header_text, encoding='utf-8', newline='\n')
         cpp.write_text(text, encoding='utf-8', newline='\n')
+
+    # CH2K8 conditional DDS v1: invalidate on the GPU thread and use the existing
+    # texture upload and submission-fenced native-resource retirement paths.
+    base_header=source/'include/rex/graphics/pipeline/texture/cache.h'
+    base_text=base_header.read_text(encoding='utf-8')
+    if 'InvalidateNativeDDSChoices' not in base_text:
+        base_text=once(base_text,'  virtual void RequestTextures(uint32_t used_texture_mask);',
+                       '  virtual void RequestTextures(uint32_t used_texture_mask);\n  void InvalidateNativeDDSChoices();')
+        base_text=once(base_text,'    void WatchCallback(const std::unique_lock<std::recursive_mutex>& global_lock, bool is_mip);',
+                       '    void WatchCallback(const std::unique_lock<std::recursive_mutex>& global_lock, bool is_mip);\n    void InvalidateNativeDDSChoice(const std::unique_lock<std::recursive_mutex>& lock);')
+        base_header.write_text(base_text,encoding='utf-8',newline='\n')
+    base_cpp=source/'src/graphics/pipeline/texture/cache.cpp'
+    base_text=base_cpp.read_text(encoding='utf-8')
+    if '// CH2K8 conditional DDS v1' not in base_text:
+        base_text='#include <rex/graphics/native_dds.h>\n'+base_text
+        base_text=once(base_text,'void TextureCache::RequestTextures(uint32_t used_texture_mask) {','''// CH2K8 conditional DDS v1
+void TextureCache::Texture::InvalidateNativeDDSChoice(const std::unique_lock<std::recursive_mutex>& lock) {
+  if(base_watch_handle_)texture_cache().shared_memory().UnwatchMemoryRange(base_watch_handle_);
+  if(mips_watch_handle_)texture_cache().shared_memory().UnwatchMemoryRange(mips_watch_handle_);
+  base_watch_handle_=nullptr;mips_watch_handle_=nullptr;
+  if(GetGuestBaseSize())WatchCallback(lock,false);
+  if(GetGuestMipsSize())WatchCallback(lock,true);
+}
+void TextureCache::InvalidateNativeDDSChoices() {
+  auto lock=global_critical_region_.Acquire();
+  for(auto& pair:textures_){const auto& key=pair.first;
+    if(!key.scaled_resolve && ::ch2k8::NativeDDSCatalog::Get().HasConditionalCandidates(key.GetWidth(),key.GetHeight(),uint32_t(key.format))) {
+      pair.second->InvalidateNativeDDSChoice(lock);
+      texture_became_outdated_.store(true,std::memory_order_release);
+    }
+  }
+}
+void TextureCache::RequestTextures(uint32_t used_texture_mask) {''')
+        base_cpp.write_text(base_text,encoding='utf-8',newline='\n')
+    text=cpp.read_text(encoding='utf-8')
+    if 'REXCVAR_DEFINE_UINT32(ch2k8_presentation_dds_api' not in text:
+        text=once(text,'namespace rex::graphics::d3d12 {','''REXCVAR_DEFINE_UINT32(ch2k8_presentation_dds_api,1,"CH2K8/Mods","Compiled conditional DDS adapter version");
+namespace rex::graphics::d3d12 {''')
+    if '// CH2K8 conditional DDS selection v1' not in text:
+        text=once(text,'void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {','''void D3D12TextureCache::RequestTextures(uint32_t used_texture_mask) {
+  // CH2K8 conditional DDS selection v1 (shared cvar registry, no cross-DLL globals).
+  auto& choices=::ch2k8::NativeDDSCatalog::Get();
+  if(choices.HasPresentationChoices() && choices.SetPresentationChoice(rex::cvar::Query<bool>("ch2k8_button_style")))InvalidateNativeDDSChoices();''')
+    cpp.write_text(text,encoding='utf-8',newline='\n')
     (source/'include/rex/graphics/native_dds.h').write_bytes((ROOT/'port/src/native_dds.h').read_bytes())
     (source/'include/rex/graphics/native_dds_upload.h').write_bytes((ROOT/'port/src/native_dds_upload.h').read_bytes())
     (source/'src/graphics/d3d12/ch2k8_native_dds.inl').write_bytes((ROOT/'port/src/native_dds_d3d12.inl').read_bytes())
