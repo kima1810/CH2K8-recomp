@@ -17,6 +17,16 @@ def test_sync_upgrade_idempotence_and_atomic_refusal(tmp_path, monkeypatch):
         originals[relative]=text
         previous=patch_common(text) if kind=='common' else patch_backend(text,kind)
         path=tmp_path/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(previous)
+    relative = 'include/rex/graphics/d3d12/command_processor.h'
+    originals[relative] = subprocess.check_output(['git','-C',str(sdk),'show','HEAD:'+relative],text=True)
+    path = tmp_path/relative
+    path.parent.mkdir(parents=True)
+    path.write_text(originals[relative])
+    relative = 'include/rex/graphics/pipeline/render_target/cache.h'
+    originals[relative] = subprocess.check_output(['git','-C',str(sdk),'show','HEAD:'+relative],text=True)
+    path = tmp_path/relative
+    path.parent.mkdir(parents=True)
+    path.write_text(originals[relative])
     monkeypatch.setattr(subprocess,'check_output',lambda args,**kw:originals[args[-1].removeprefix('HEAD:')])
     prepare_sync(tmp_path)
     before={p:p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}

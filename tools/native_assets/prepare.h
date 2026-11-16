@@ -1,5 +1,36 @@
 #pragma once
-#include "folder.h"
+#include "named_layout.h"
+#include "scene_image.h"
+#include "../../port/src/loose_archive.h"
+
+// Verified court artwork exceptions to the shared Xbox format and material rule.
+// Match all four identifiers so a different scene or texture keeps the default.
+inline bool court_texture_support(uint32_t bank, uint32_t record, uint32_t slot,
+                                  uint32_t texture, bool default_support) {
+  struct Placement {
+    uint32_t bank, record, slot, texture;
+    bool support;
+  };
+  static constexpr Placement placements[] = {
+      {0x3975fa24, 9, 2, 0xb3151c0e, true},   // s013 floor
+      {0x42ab980a, 1, 9, 0xaadcd2be, true},  // s258 arena
+      {0x42ab980a, 1, 18, 0xff1c08c9, true},
+      {0x42ab980a, 1, 21, 0xcd85219f, true},
+      {0x42ab980a, 1, 24, 0x7857b3a2, true},
+      {0x42ab980a, 1, 25, 0xe61dc45a, true},
+      {0x42ab980a, 1, 26, 0x63a021c2, true},
+      {0x42ab980a, 1, 30, 0xc518ad48, false},
+      {0x42ab980a, 1, 40, 0xe7ba9d70, true},
+      {0x42ab980a, 9, 2, 0xb7cb594f, true},  // s258 floor
+      {0x42ab980a, 9, 10, 0xcba9122e, true},
+      {0xfea11aac, 9, 13, 0x9f39fccc, true}, // s302 floor
+  };
+  for (const auto &entry : placements)
+    if (entry.bank == bank && entry.record == record && entry.slot == slot &&
+        entry.texture == texture)
+      return entry.support;
+  return default_support;
+}
 inline J discover(Folder &f) {
   J edits = J::array();
   for (auto &[id, e] : f.entries)
@@ -62,7 +93,309 @@ inline void validate_tree(const fs::path &root, Job &job) {
     }
   }
 }
-inline J prepare(const fs::path &source, Job &job) {
+inline J export_scene_textures(Folder &f, Job &job, bool named = false,
+                               const std::string &only_bank = {}) {
+  J catalog = J::array(), unsupported = J::array();
+  auto marker = f.root / L"scene_textures.json";
+  std::map<std::tuple<uint32_t, uint64_t, uint64_t>, J> previous;
+  if (named && fs::exists(marker)) {
+    auto old = json(marker);
+    auto selected = [&](const J &source) {
+      return only_bank.empty() ||
+          f.entries.at(uint32_t(num(source.at("bank")))).at("folder").get<std::string>() == only_bank;
+    };
+    for (auto &scene : old.at("scenes")) {
+      if (!selected(scene)) {
+        catalog.push_back(scene);
+        continue;
+      }
+      for (auto &t : scene.at("textures"))
+        previous.emplace(std::tuple{uint32_t(num(scene.at("bank"))),
+                   num(scene.at("record")), num(t.at("slot"))}, t);
+    }
+    for (auto &issue : old.at("unsupported"))
+      if (!selected(issue.at("source")))
+        unsupported.push_back(issue);
+  }
+  uint64_t done = 0;
+  for (auto &[id, e] : f.entries) {
+    if (done++ % 64 == 0)
+      job.update(done, f.entries.size(), "Exporting editable Xbox DDS files...");
+    job.check();
+    auto bank = e.at("folder").get<std::string>();
+    if (!only_bank.empty() && bank != only_bank)
+      continue;
+    for (auto &r : f.records(e)) {
+      auto kind = uint32_t(num(r["type"]));
+      bool scene = kind == 0xe26c9b5d;
+      bool texture = kind == 0x5c369069 || kind == 0x5c36fb69;
+      if (!scene && !(named && texture))
+        continue;
+      auto record = bank + "/" + r.at("folder").get<std::string>();
+      if (texture && fs::is_regular_file(contained(f.root, record + "/texture.dds")))
+        continue;
+      auto files = f.scene_components(e, r);
+      bool inline_pixels = texture && files.size() == 1;
+      if (files.size() != 2 && !inline_pixels)
+        continue;
+      auto cpu = read(files[0]);
+      if (cpu.size() < (scene ? 0x28 : 0xac))
+        continue;
+      uint64_t count = scene ? be(cpu, 0x20) : 1;
+      if (!count)
+        continue;
+      auto index = num(r["index"]);
+      auto source = J{{"bank", id}, {"record", index}};
+      if (texture)
+        source["kind"] = "txtr";
+      uint64_t table = 0;
+      if (scene)
+        try {
+          table = scene_texture_table(cpu, count);
+        } catch (const std::exception &ex) {
+          unsupported.push_back(J{{"source", source}, {"reason", ex.what()}});
+          continue;
+        }
+      auto labels = named && scene ? scene_sampler_names(cpu)
+                                   : std::map<uint32_t, SceneTextureLabel>{};
+      std::map<uint32_t, unsigned> repeated;
+      if (named && scene)
+        for (uint64_t slot = 0; slot < count; ++slot)
+          ++repeated[be(cpu, table + slot * 224)];
+      Bytes gpu;
+      bool loaded = false;
+      J textures = J::array();
+      for (uint64_t slot = 0; slot < count; ++slot) {
+        job.check();
+        Bytes descriptor;
+        try {
+          descriptor = scene ? sub(cpu, table + slot * 224, 224)
+              : inline_pixels ? inline_texture_descriptor(cpu) : cpu;
+        } catch (const std::exception &ex) {
+          auto ref = source;
+          ref["texture"] = slot;
+          unsupported.push_back(J{{"source", ref}, {"reason", ex.what()}});
+          continue;
+        }
+        auto texid = be(descriptor, 0);
+        J info{{"id", texid},
+               {"header_offset", scene ? table + slot * 224 : 0},
+               {"xbox_format", be(descriptor, 0x98) & 63}};
+        if (is_indexed_texture(descriptor))
+          info["pixel_storage"] = "indexed-argb-palette";
+        else if (num(info["xbox_format"]) == 0)
+          info["explicit_format"] = be(descriptor, 8) & 63;
+        auto relative = "assets/textures/scne/" + hex(id) + "/" +
+                        decpad(index) + "/texture_" + decpad(slot) + ".dds";
+        if (named) {
+          std::string label;
+          if (!scene)
+            label = r.value("name", resource_label(r));
+          else if (auto it = resource_names().find(texid); it != resource_names().end())
+            label = it->second;
+          else if (auto it = labels.find(texid); it != labels.end()) {
+            const auto &usage = it->second;
+            if (usage.meshes.size() == 1)
+              label = *usage.meshes.begin() + "_";
+            label += (usage.roles.size() == 1 ? *usage.roles.begin() : "texture") +
+                     "_" + hex(texid);
+          } else
+            label = "texture_" + hex(texid);
+          if (scene && repeated[texid] > 1)
+            label += "_" + decpad(slot);
+          bool support = false;
+          if (scene) {
+            auto it = labels.find(texid);
+            auto fmt = num(info["xbox_format"]);
+            support = fmt == 10 || fmt == 49 || fmt == 59 || fmt == 60 ||
+                (it != labels.end() && !it->second.roles.contains("diffuse") &&
+                                       !it->second.roles.contains("color"));
+            support = court_texture_support(id, index, slot, texid, support);
+            if (it != labels.end()) {
+              info["roles"] = it->second.roles;
+              info["geometry"] = it->second.meshes;
+            }
+            info["usage"] = support ? "support" : "artwork";
+          }
+          relative = record + (support ? "/_support/" : "/") + label + ".dds";
+        }
+        if (auto prior = previous.find({id, index, slot}); prior != previous.end()) {
+          auto item = prior->second;
+          if (item.contains("presentation_file")) {
+            info.erase("usage");
+            item.update(info);
+            textures.push_back(std::move(item));
+            continue;
+          }
+          if (item.at("file").get<std::string>() != relative)
+            relocate_resource(contained(f.root, item.at("file")), contained(f.root, relative));
+          item["file"] = relative;
+          item.update(info);
+          textures.push_back(std::move(item));
+          continue;
+        }
+        if (!loaded && !inline_pixels) {
+          gpu = read(files[1]);
+          loaded = true;
+        }
+        Bytes dds;
+        try {
+          dds = export_resource_dds(descriptor, inline_pixels ? cpu : gpu);
+        } catch (const std::exception &ex) {
+          auto ref = source;
+          ref["texture"] = slot;
+          unsupported.push_back(J{{"source", ref}, {"reason", ex.what()}});
+          continue;
+        }
+        publish(contained(f.root, relative), dds);
+        info["slot"] = slot;
+        info["file"] = relative;
+        info["sha256"] = sha(dds);
+        textures.push_back(std::move(info));
+      }
+      if (!textures.empty()) {
+        source["textures"] = textures;
+        catalog.push_back(source);
+      }
+    }
+  }
+  if (named && !previous.empty()) {
+    auto tree = f.root / L"assets" / L"textures" / L"scne";
+    if (fs::is_directory(tree)) {
+      std::vector<fs::path> dirs{tree};
+      for (auto &item : fs::recursive_directory_iterator(tree))
+        if (item.is_directory())
+          dirs.push_back(item.path());
+      for (auto it = dirs.rbegin(); it != dirs.rend(); ++it)
+        if (fs::is_empty(*it))
+          fs::remove(*it);
+      if (fs::is_empty(tree.parent_path()))
+        fs::remove(tree.parent_path());
+    }
+  }
+  jsonwrite(marker, J{{"version", 1}, {"scenes", catalog}, {"unsupported", unsupported}});
+  return J{{"resources", catalog.size()}, {"unsupported", unsupported.size()}};
+}
+
+inline size_t apply_scene_textures(Folder &f, Job &job) {
+  auto marker = f.root / L"scene_textures.json";
+  if (!fs::exists(marker))
+    return 0;
+  auto catalog = json(marker);
+  require(catalog.at("version") == 1, "Unsupported scene DDS catalog");
+  size_t edited = 0;
+  for (auto &scene : catalog.at("scenes")) {
+    job.check();
+    std::map<uint64_t, Bytes> edits;
+    for (auto &item : scene.at("textures")) {
+      auto file = contained(f.root, item.at("file"));
+      auto dds = read(file, 128ull << 20);
+      if (sha(dds) != item.at("sha256").get<std::string>())
+        require(edits.emplace(num(item.at("slot")), std::move(dds)).second,
+                "Duplicate scene DDS slot");
+    }
+    if (edits.empty())
+      continue;
+    auto &e = f.entries.at(uint32_t(num(scene.at("bank"))));
+    auto records = f.records(e);
+    auto record = std::find_if(records.begin(), records.end(), [&](auto &r) {
+      return r.at("index") == scene.at("record");
+    });
+    bool scene_texture = scene.value("kind", std::string()) != "txtr";
+    require(record != records.end(), "Missing DDS resource owner");
+    auto type = num(record->at("type"));
+    require(scene_texture ? type == 0xe26c9b5d :
+                (type == 0x5c369069 || type == 0x5c36fb69),
+            "DDS resource type differs from the catalog");
+    auto files = f.scene_components(e, *record);
+    bool inline_pixels = !scene_texture && files.size() == 1;
+    require(files.size() == 2 || inline_pixels, "Missing DDS resource components");
+    for (auto &other : records) {
+      if (other.at("index") == record->at("index"))
+        continue;
+      auto shared = f.scene_components(e, other);
+      require(std::find(shared.begin(), shared.end(), files.back()) == shared.end(),
+              "Scene DDS component is shared with another resource");
+    }
+    auto cpu = read(files.front()), gpu = inline_pixels ? cpu : read(files.back());
+    const auto original = gpu;
+    uint64_t count = scene_texture ? be(cpu, 0x20) : 1;
+    uint64_t table = scene_texture ? scene_texture_table(cpu, count) : 0;
+    for (auto &[slot, dds] : edits) {
+      require(slot < count, "Missing scene DDS slot");
+      auto descriptor = scene_texture ? sub(cpu, table + slot * 224, 224)
+          : inline_pixels ? inline_texture_descriptor(cpu) : cpu;
+      replace_resource_dds(descriptor, dds, gpu);
+    }
+    for (uint64_t slot = 0; slot < count; ++slot) {
+      auto descriptor = scene_texture ? sub(cpu, table + slot * 224, 224)
+          : inline_pixels ? inline_texture_descriptor(cpu) : cpu;
+      if (auto it = edits.find(slot); it != edits.end()) {
+        auto actual = export_resource_dds(descriptor, gpu);
+        auto header = le(actual, 84) == 0x30315844 ? 148 : 128;
+        require(std::equal(actual.begin() + header, actual.end(),
+                           it->second.begin() + header),
+                "Conflicting shared scene DDS pixels");
+      } else {
+        // Verify the full source extent, including unsupported formats/mips.
+        int64_t start = int64_t(be(descriptor, 0x6c)) - 1;
+        auto length = be(descriptor, 0x70);
+        if (!length)
+          continue;
+        require(start >= 0, "Invalid neighboring scene texture offset");
+        bounds(gpu, start, length);
+        require(std::equal(gpu.begin() + start, gpu.begin() + start + length,
+                           original.begin() + start),
+                "Scene DDS edit overlaps a neighboring texture");
+      }
+    }
+    auto file = f.root / L"_runtime" / L"scene-textures" / path(sha(gpu) + ".dat");
+    publish(file, gpu);
+    require(f.component_overrides.emplace(files.back(), file).second,
+            "Scene DDS component has multiple owners");
+    edited += edits.size();
+  }
+  return edited;
+}
+
+inline std::map<uint32_t, J> stock_bank_views(const fs::path &base,
+                                            const std::map<uint32_t, J> &edited) {
+  ch2k8::LooseArchive archive(base, false);
+  const auto &ranges = archive.ranges();
+  auto toc = read(contained(base, ranges.at(0).path));
+  require(be(toc, 0) == 0xaa00b3bf && be(toc, 4) == 2048 &&
+          be(toc, 8) == archive.parts().size(), "Invalid stock archive catalog");
+  auto table = 24 + archive.parts().size() * 16;
+  auto count = be(toc, 16);
+  bounds(toc, table, count * 16ull);
+  std::map<uint32_t, J> views;
+  for (unsigned i = 0; i < count; ++i) {
+    const auto row = table + 16 * i;
+    const auto id = be(toc, row);
+    if (edited.contains(id))
+      continue;
+    const auto start = uint64_t(be(toc, row + 4)) * 2048;
+    const auto size = be(toc, row + 12);
+    auto pos = std::lower_bound(ranges.begin(), ranges.end(), start,
+        [](const auto &range, uint64_t value) { return range.offset < value; });
+    J segments = J::array();
+    uint64_t cursor = 0;
+    while (cursor < size) {
+      require(pos != ranges.end() && pos->offset == start + cursor &&
+              pos->size <= size - cursor &&
+              (pos->path.starts_with("assets/") || pos->path.starts_with("_runtime/")),
+              "Stock bank differs from its prepared asset map");
+      segments.push_back(J{{"offset", cursor}, {"size", pos->size},
+                           {"path", "@stock/" + pos->path}});
+      cursor += pos++->size;
+    }
+    require(views.emplace(id, J{{"size", size}, {"segments", segments}}).second,
+            "Duplicate stock bank identity");
+  }
+  return views;
+}
+
+inline J prepare(const fs::path &source, Job &job, const fs::path &stock = {}) {
   auto root = longpath(fs::canonical(longpath(source)));
   validate_tree(root, job);
   auto original = json(root / L"assets.json");
@@ -83,7 +416,9 @@ inline J prepare(const fs::path &source, Job &job) {
     identities[k] = digest;
     return fresh;
   };
+  uint64_t checked_banks = 0;
   for (auto &[id, e] : f.entries) {
+    job.update(checked_banks++, f.entries.size(), "Checking DDS files in prepared banks...");
     job.check();
     const auto &l = f.layout(e);
     for (auto &t : l.value("textures", J::array())) {
@@ -190,7 +525,53 @@ inline J prepare(const fs::path &source, Job &job) {
     } else
       throw std::runtime_error("Unsupported native edit kind");
   }
-  auto plan = f.plan(job);
+  job.update(0, 0, "Preparing edited scene textures...");
+  auto scene_edits = apply_scene_textures(f, job);
+  std::map<uint32_t, J> stock_views;
+  if (!stock.empty()) {
+    auto base_manifest = json(stock / L"assets.json");
+    stock_views = stock_bank_views(stock, f.entries);
+    // A direct DDS binding is selected by pixel identity, not by IFF name.
+    // Never let a mod overwrite the same identity in an unmodified owner.
+    std::set<std::string> changed_keys;
+    for (const auto &row : dds_rows)
+      changed_keys.insert(row.substr(0, row.rfind('\t')));
+    J entries = J::array();
+    uint64_t checked = 0;
+    for (const auto &entry : base_manifest.at("entries")) {
+      if (!changed_keys.empty() && checked % 32 == 0)
+        job.update(checked, base_manifest.at("entries").size(), "Checking shared stock texture identities...");
+      ++checked;
+      const auto id = uint32_t(num(entry.at("hash")));
+      if (f.entries.contains(id)) {
+        entries.push_back(f.entries.at(id));
+        continue;
+      }
+      require(stock_views.contains(id), "Unprepared stock bank");
+      entries.push_back(entry);
+      if (!changed_keys.empty()) {
+        const auto layout = json(contained(stock, entry.at("folder")) / L"asset.json");
+        for (const auto &texture : layout.value("textures", J::array())) {
+          const auto &info = texture.at("descriptor");
+          require(!changed_keys.contains(key(unsigned(num(info["width"])),
+                      unsigned(num(info["height"])), unsigned(num(info["format"])),
+                      texture.at("identity").get<std::string>())),
+                  "Conflicting native DDS identities");
+        }
+      }
+    }
+    for (const auto &entry : f.manifest.at("entries"))
+      if (entry.value("added", false)) {
+        require(std::none_of(base_manifest.at("entries").begin(),
+                 base_manifest.at("entries").end(), [&](const auto &stock_entry) {
+                   return stock_entry.at("hash") == entry.at("hash");
+                 }), "New mod bank conflicts with a stock bank");
+        entries.push_back(entry);
+      }
+    f.manifest["entries"] = std::move(entries);
+    text(root / L"stock-root.txt", utf8(stock) + "\n");
+  }
+  auto plan = f.plan(job, stock_views);
   std::string map = "CH2K8_LOOSE_V1\n";
   for (auto &p : plan["parts"])
     map += "P\t" + std::to_string(num(p["offset"])) + "\t" +
@@ -202,7 +583,7 @@ inline J prepare(const fs::path &source, Job &job) {
     std::string name = s["path"];
     require(n && num(s["offset"]) == cursor &&
                 name.find_first_of("\t\r\n") == std::string::npos &&
-                fs::file_size(contained(root, name)) == n,
+                (name.starts_with("@stock/") || fs::file_size(contained(root, name)) == n),
             "Invalid scatter-map coverage or file size");
     map += "S\t" + std::to_string(cursor) + "\t" + std::to_string(n) + "\t" +
            name + "\n";
@@ -227,5 +608,6 @@ inline J prepare(const fs::path &source, Job &job) {
            {"banks", f.entries.size()},
            {"parts", plan["parts"].size()},
            {"dds_bindings", dds_rows.size()},
+           {"scene_dds_edits", scene_edits},
            {"pcm_bindings", pcm_rows.size()}};
 }

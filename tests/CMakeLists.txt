@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.25)
+project(CHMOD_Framework_Test_Compilation LANGUAGES CXX)
+add_executable(chmod_framework_tests mod_framework_tests.cpp ../port/src/mod_framework.cpp)
+target_compile_features(chmod_framework_tests PRIVATE cxx_std_20)
+add_executable(chmod_presentation_tests mod_presentation_tests.cpp ../port/src/mod_framework.cpp)
+target_compile_features(chmod_presentation_tests PRIVATE cxx_std_20)
+# Deliberately no add_test/custom run command: remote user executes explicitly.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+ add_executable(chmod_linkage_tests mod_linkage_weak.cpp mod_linkage_tests.cpp)
+ target_compile_features(chmod_linkage_tests PRIVATE cxx_std_20)
+endif()

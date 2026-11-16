@@ -1,5 +1,9 @@
 # Xbox folder assets and native DDS
 
+For packaged source-bound DDS/cloth overrides and isolated native roster saves,
+see the [current CHMOD package profile](chmod-1.1.md) and its
+[implementation evidence/status](../findings/2026-11-08-chmod-backend.md).
+
 The beta launcher uses native `ch2k8_tools.exe` for ISO import and resource preparation. For the standalone Windows beta package and tester workflow, see [BETA.md](../../BETA.md) and the [portability validation](../findings/2026-11-02-beta-portability.md). The older folder packager described below remains a checkout-oriented developer tool.
 
 ## Current direct-folder build (2026-11-02)
@@ -83,24 +87,20 @@ folder-game/
   assets.map                   runtime scatter map
   native_dds.index              original-pixel-to-DDS catalog
   assets/
-    frontend_sync.iff/          directory, not an IFF binary
+    s258.iff/                  bank directory
       asset.json
-      gap_00000000.dat          preserved header/opaque bytes
-      block_00.stored           original compressed block
-      block_01.stored
-      tail.dat
-      0000_<record-id>.scne/
+      archive_header.dat       preserved Xbox IFF header
+      floor.scne/
         record.json
-        block0.dat             editable decoded CPU component
-        block1.dat             decoded GPU component, when present
-      0010_<record-id>.txtr/
+        scene.dat              decoded CPU component and scene descriptors
+        scene_gpu.dat          decoded GPU component
+        diffuse_49977575.dds   DDS base level with sampler role and texture ID
+    teamselectlogo.iff/
+      logo000.txtr/
         record.json
-        block0.dat
-        block1.dat
-        texture.dds
-    roster_english.iff/
-      <index>_<id>.rost/
-        block0.dat
+        texture_header.dat
+        texture_pixels.dat
+        logo000.dds
     hash_<archive-hash>.iff/    stable fallback for unresolved names
   _archive/                    original TOC/alignment/opaque bytes
   _cache/                      per-IFF overlays and validation receipts
@@ -112,8 +112,8 @@ are stored once under their first owner. `asset.json` gives their offsets/paths.
 
 ## Resource editing
 
-Close the game, edit decoded `blockN.dat` files, then launch through the provided
-entry. The launcher prepares changes before starting the game. **Keep component
+Close the game, edit the named decoded components, then launch through the
+provided entry. Older imports use `blockN.dat` filenames. The launcher prepares changes before starting the game. **Keep component
 lengths unchanged.** SCNE data, texture descriptors/pixels, roster bytes and other
 records remain editable. This is a binary interface, not a semantic GUI or JSON
 roster editor. `record.json` is descriptive; changing it does not edit the game.
@@ -145,6 +145,50 @@ again; delete `_cache/validation.json` for a full rescan. Prepared data/header
 filenames are content-addressed and the map is published after validation.
 Restart after edits. Hot reload and preparing while the game runs are unsupported.
 
+## Named scene and texture resources
+
+Launcher imports use the Xbox header to assign a resource type to each
+record. Known names are matched against their original resource ID. The
+installed court at `assets/s258.iff/floor.scne/` contains `scene.dat`,
+`scene_gpu.dat`, and the floor DDS files. When an exact texture name is
+missing, filenames use the shader sampler role where it is unambiguous and
+include the original texture ID. Other records use their type and ID as a
+fallback. Shared component files retain one physical copy.
+
+The paired `teamselectlogo.iff` bank contains 520 `logoNNN.txtr` folders
+with the original numbering. Each folder contains the editable DDS, the texture
+header, and Xbox pixels. Inline TXTR records use `texture_inline.dat` for the
+combined source component. The map still serves each component at the offset specified
+by the paired header. LAYT, ANIM, CDAN and other recognized resource types
+retain their header type in the folder name.
+
+The native launcher converts edited DDS base levels back into the owning
+runtime component. Keep the format, dimensions, face count and a single mip
+level. Indexed Xbox textures such as jersey numbers use an RGBA8 DDS for
+editing. The writer retains their Xbox palette and other mip levels
+and accepts new colors when unused palette entries are available. The CTX1
+DDS uses an Xbox-specific FourCC and requires a CTX1-capable editor.
+The catalog records the resource ID, descriptor offset and Xbox fetch format,
+and reports unsupported layouts. Use
+`ch2k8_tools organize-assets GAME_FOLDER` on a copy of an existing
+installation to apply this layout and migrate existing DDS edits.
+
+For a named SCNE, the exporter follows validated draw runs to materials and
+texture samplers. It uses an unambiguous geometry name when the scene preserves
+one. Texture IDs distinguish shared or unnamed materials. Lighting and other
+recognized shader data are placed in `_support/` and retain their Xbox layout.
+
+Court artwork and support textures both use DDS. Names retain the verified
+geometry, sampler and texture ID where available. LSU's center-court logo is
+`centerlogo_diffuse_a37a1e3d.dds`. The `_support/` folders retain data maps
+and cubemaps in their original encodings.
+
+To migrate a previous PNG layout, use
+`python tools/court_artwork.py restore-dds GAME_FOLDER --archive BACKUP_FOLDER`.
+Use a new backup folder outside the game installation. The migration applies
+pending PNG edits, archives the PNGs and restores the catalog's loose DDS paths.
+Only pending PNG edits require the existing Pillow and Studio converter.
+
 ## Native DDS
 
 Supported TXTR base levels export as legacy DDS DXT1/DXT3/DXT5 (BC1/BC2/BC3),
@@ -157,7 +201,7 @@ Upscaling artwork is an external editing step; import does not create new detail
 
 Unsupported formats, non-block-aligned BC sizes, stacked/cube/volume resources,
 and base levels in packed mip tails retain editable raw data. `asset.json` lists
-the reason. SCNE-embedded DDS discovery is not implemented. DX10 DDS, format
+the reason. DX10 DDS, format
 changes, downscales, arrays and cubes are rejected rather than guessed.
 
 Only edited DDS files enter the active catalog, avoiding stock texture hashing.
@@ -199,6 +243,32 @@ not in-game visuals. The user should test an unchanged-folder boot, gameplay,
 field edit. Check native upload log lines. The game was not launched during work.
 
 ## Baseline references
+
+### Default Xbox import layout
+
+Fresh imports from an Xbox ISO or extracted disc use the named layout
+automatically. The importer resolves bank names by Xbox filename CRC, including
+world and selection variants of alternate uniforms, shoes, and cloth. It
+resolves internal resources by record CRC, using names found in the shipped SCNE
+strings where available. Unresolved names retain their hashes.
+
+Court SCNEs keep their geometry and material labels on editable DDS files.
+The same artwork and `_support` classification applies to every court, with
+verified exceptions matched to their bank, scene, slot, and texture IDs.
+The native import command accepts `--legacy-layout` for tools that require the
+old numbered resource folders.
+
+### Recovered Xbox asset names
+
+The loose importer uses uppercase filename CRCs for Xbox banks and
+case-sensitive CRCs for records. Its naming tables include world and selection
+uniforms, cloth and shoes, and identifiers recovered from SCNE strings. A bank
+or record without a verified match retains its hash in the directory name.
+
+Run `python tools/recover_asset_names.py <game-folder>` to preview renames on
+an existing loose Xbox installation. Add `--apply` to migrate the paths and
+update their metadata and indexes. The migration writes
+`asset_path_aliases.json` so the mod loader can resolve older asset paths.
 
 ### Paired component update
 

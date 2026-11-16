@@ -4,10 +4,15 @@
 #include <rex/filesystem/vfs.h>
 #include <rex/logging.h>
 #include <rex/runtime.h>
+#include <cstdlib>
 
 namespace {
 using namespace rex::filesystem;
 using rex::X_STATUS;
+void TraceShorts(std::string_view path) {
+  if (path.find("cloth_shorts.iff/") != std::string_view::npos)
+    REXLOG_INFO("Loose shorts resource opened: {}", path);
+}
 class LooseFile final : public File {
  public:
   LooseFile(uint32_t access,Entry* entry,std::shared_ptr<ch2k8::LooseArchive> archive,uint64_t offset,uint64_t size)
@@ -58,7 +63,9 @@ class LooseDevice final : public HostPathDevice {
   };
  public:
   explicit LooseDevice(const std::filesystem::path& root)
-    : HostPathDevice("\\Device\\CH2K8Assets",root,true),archive_(std::make_shared<ch2k8::LooseArchive>(root)) {}
+    : HostPathDevice("\\Device\\CH2K8Assets",root,true),
+      archive_(std::make_shared<ch2k8::LooseArchive>(
+          root, false, std::getenv("CH2K8_TRACE_SHORTS") ? TraceShorts : nullptr)) {}
   bool Initialize() override {
     // A synthetic root is essential: HostPathEntry's existence check would
     // discard virtual archive parts because no physical 0A..0M files exist.

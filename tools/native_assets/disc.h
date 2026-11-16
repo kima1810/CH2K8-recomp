@@ -233,11 +233,39 @@ inline std::map<uint32_t, std::string> candidate_names() {
   while (banks >> name)
     for (auto ext : {".iff", ".cdf", ".bin"})
       add(name + ext);
-  for (auto prefix : {"ua", "uh", "ux", "selua", "seluh", "selux", "s", "m",
+  for (auto prefix : {"ua", "uh", "ux", "uy", "uz", "selua", "seluh", "selux", "seluy", "seluz", "s", "m",
                       "p", "coach", "h"})
-    for (unsigned i = 0; i < (std::string(prefix) == "h" ? 10000 : 1000); ++i)
+    for (unsigned i = 0; i < (std::string(prefix) == "h" ? 10000 : 1024); ++i)
       for (auto ext : {".iff", ".cdf", ".bin"})
         add(std::string(prefix) +
             decpad(i, std::string(prefix) == "h" ? 4 : 3) + ext);
+  for (auto name : {"aistreet", "band", "chants", "chatter", "cheerleaders",
+                    "cribmusic", "drillmusic", "femusic", "hlmusic", "lines",
+                    "loadm", "overlayaudio", "palines", "paplayers", "players", "teams"})
+    add(std::string(name) + ".bin");
+  for (auto name : {"pcaatface", "pcarmtats", "pcchest", "pcfacehair", "pcfacenormal",
+                    "pcfacenormal_dbg", "pchair", "sideline_items"})
+    for (auto ext : {".iff", ".cdf"})
+      add(std::string(name) + ext);
+  for (auto sound : {"ahh", "boo", "cheer-lrg", "cheer-med", "cheer-sml", "freethrow"})
+    for (auto direction : {"front", "rear"})
+      for (auto venue : {"large", "small"})
+        for (auto ext : {".iff", ".cdf"})
+          add(std::string("cwd-") + sound + "-" + direction + "_" + venue + ext);
+  add("eyeball.iff");
+  add("lights.iff");
+  add("cloth_shorts.iff");
+  for (auto shape : {"u", "v", "vtri", "tri", "wishbone"})
+    for (auto build : {"", "_thin", "_reg", "_fat"})
+      add(std::string("cloth_") + shape + build + ".iff");
+  for (auto height : {"hi", "lo"})
+    for (unsigned number = 1; number <= 4; ++number)
+      add(std::string(height) + "_shoe" + std::to_string(number) + ".iff");
+  add("shoe_0.iff");
+  add("shoe_1.iff");
+  for (unsigned base : {100u, 200u, 300u, 500u})
+    for (unsigned style = 0; style < 4; ++style)
+      for (unsigned color = 0; color < 16; ++color)
+        add("shoe_" + std::to_string(base + style) + "_" + decpad(color, 2) + ".iff");
   return out;
 }

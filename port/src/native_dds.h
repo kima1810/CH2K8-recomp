@@ -62,6 +62,17 @@ class NativeDDSCatalog {
       items_[Key(item.width,item.height,item.format)].push_back(std::move(item));
     }
     if(in.bad()) throw std::runtime_error("Cannot read native DDS catalog");
+    std::ifstream choices(root_/"native_dds_choices.index");
+    if(choices){
+      if(!std::getline(choices,line) || line!="CH2K8_PRESENTATION_DDS_V1")throw std::runtime_error("Invalid conditional DDS catalog");
+      while(std::getline(choices,line)){
+        if(line.empty() || line.size()>220 || conditional_.size()>=6)throw std::runtime_error("Invalid conditional DDS entry");
+        if(!conditional_.insert(line).second)throw std::runtime_error("Duplicate conditional DDS entry");
+      }
+      if(choices.bad() || conditional_.size()<2)throw std::runtime_error("Button Style requires the primary and stick atlases");
+      for(const auto& path:conditional_){bool matched=false;for(const auto& group:items_)for(const auto& item:group.second)if(item.path==path)matched=true;
+        if(!matched)throw std::runtime_error("Conditional DDS identity missing from native index");}
+    }
   }
   static NativeDDSCatalog& Get() {
     static NativeDDSCatalog catalog([] {
@@ -78,6 +89,12 @@ class NativeDDSCatalog {
   bool HasCandidates(uint32_t width,uint32_t height,uint32_t format) const {
     return items_.contains(Key(width,height,format));
   }
+  bool HasPresentationChoices()const{return !conditional_.empty();}
+  bool SetPresentationChoice(bool value){if(selection_==value)return false;selection_=value;return true;}
+  bool HasConditionalCandidates(uint32_t w,uint32_t h,uint32_t f)const{
+    auto found=items_.find(Key(w,h,f));if(found==items_.end())return false;
+    for(const auto& item:found->second)if(conditional_.contains(item.path))return true;return false;
+  }
   // A resident identity needs only metadata: its GPU resource already contains
   // the payload. Avoid re-reading the file after releasing the CPU copy.
   std::shared_ptr<const NativeDDS> Find(uint32_t width,uint32_t height,uint32_t format,const std::function<uint64_t()>& hash_pixels,bool include_stock=false,const NativeDDSInfo* resident=nullptr) {
@@ -86,6 +103,7 @@ class NativeDDSCatalog {
     const auto hash=hash_pixels();
     for(const auto& item:found->second) {
       if(item.hash!=hash) continue;
+      if(conditional_.contains(item.path) && !selection_)return {};
       if(!include_stock && unchanged_.contains(item.identity)) return {};
       if(resident && resident->identity==item.identity) {
         auto dds=std::make_shared<NativeDDS>();
@@ -124,5 +142,7 @@ class NativeDDSCatalog {
   std::unordered_map<uint64_t,std::vector<Item>> items_;
   std::unordered_map<std::string,std::weak_ptr<const NativeDDS>> loaded_;
   std::unordered_set<std::string> unchanged_;
+  std::unordered_set<std::string> conditional_;
+  bool selection_=false; // GPU-thread owned, never written from a mod callback.
 };
 } // namespace ch2k8

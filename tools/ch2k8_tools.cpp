@@ -1,6 +1,9 @@
 #include "../port/src/loose_archive.h"
 #include "native_assets/disc.h"
-#include "native_assets/prepare.h"
+#include "native_assets/prepared_state.h"
+#include "native_assets/mod_contracts.h"
+#include "native_assets/court_contract.h"
+#include "native_assets/uniform_contracts.h"
 constexpr const char *SupportedXex =
     "71e8983d1cc009e485696aad19b5fa4b4661761870e2c8972717b932c1e4be36";
 J inspect(Disc &disc, Archive &archive, const std::string &expected, Job &job) {
@@ -22,7 +25,7 @@ J inspect(Disc &disc, Archive &archive, const std::string &expected, Job &job) {
            {"supported", true}};
 }
 J import_game(const fs::path &image, const fs::path &destination, Job &job,
-              const std::string &expected) {
+              const std::string &expected, bool named) {
   auto output = longpath(destination);
   require(!fs::exists(output), "Installation folder already exists; existing "
                                "folders are never overwritten");
@@ -95,7 +98,13 @@ J import_game(const fs::path &image, const fs::path &destination, Job &job,
     job.update(done, done, "Splitting paired Xbox resources...");
     materialize(game, manifest, job, false);
     job.update(done, done, "Validating native loose resource maps...");
-    prepare(game, job);
+    if (named) {
+      Folder layout(game);
+      name_assets(layout, job);
+    }
+    Folder folder(game);
+    export_scene_textures(folder, job, named);
+    prepare_current(game, job, false, true);
     jsonwrite(game / L"iso-validation.json", validation);
     job.update(done, done, "Finalizing loose asset installation...");
     require(!fs::exists(output),
@@ -146,7 +155,7 @@ int wmain(int argc, wchar_t **argv) {
           {"version", 1},
           {"python_required", false},
           {"features", J::array({"iso", "xex-extraction", "direct-resources",
-                                 "native-dds", "native-pcm"})}};
+                                 "native-dds", "native-pcm", "mod-contracts-1.1", "uniform-registration-1.2"})}};
     else if (pos[0] == "validate-runtime") {
       require(pos.size() == 2, "Usage: validate-runtime GAME_FOLDER");
       ch2k8::LooseArchive archive(path(pos[1]));
@@ -156,6 +165,28 @@ int wmain(int argc, wchar_t **argv) {
                 "Runtime map read failed");
       }
       result = {{"ready", true}, {"parts", archive.parts().size()}};
+    } else if (pos[0] == "validate-uniform") {
+      require(pos.size()==6,"Usage: validate-uniform GAME PACKAGE_BANK TEMPLATE_HASH NAME TEMPLATE_LAYOUT_SHA256");
+      auto hash=std::stoull(pos[3]);require(hash<=UINT32_MAX,"Invalid template bank hash");
+      result=validate_uniform_bank(path(pos[1]),path(pos[2]),uint32_t(hash),pos[4],pos[5]);
+    } else if (pos[0] == "vanilla-uniforms") {
+      require(pos.size()==3,"Usage: vanilla-uniforms GAME UNUSED");
+      result = vanilla_uniform_routes(path(pos[1]));
+    } else if (pos[0] == "activate-roster-uniforms") {
+      require(pos.size()==5,"Usage: activate-roster-uniforms PAYLOAD HEADER REQUEST OUTPUT");
+      result = activate_roster_uniforms(path(pos[1]),path(pos[2]),path(pos[3]),path(pos[4]));
+    } else if (pos[0] == "validate-roster") {
+      require(pos.size()==3,"Usage: validate-roster Roster.ROS Roster.ROS.header");
+      result=validate_roster_save(path(pos[1]),path(pos[2]));
+    } else if (pos[0] == "validate-court") {
+      require(pos.size()==5,"Usage: validate-court SOURCE_CPU SOURCE_GPU EDITED_CPU EDITED_GPU");
+      result=validate_court_scene(path(pos[1]),path(pos[2]),path(pos[3]),path(pos[4]));
+    } else if (pos[0] == "validate-cloth") {
+      require(pos.size()==3,"Usage: validate-cloth ORIGINAL REPLACEMENT");
+      result=validate_cloth_positions(path(pos[1]),path(pos[2]));
+    } else if (pos[0] == "validate-cloth-rest") {
+      require(pos.size()==3,"Usage: validate-cloth-rest ORIGINAL REPLACEMENT");
+      result=validate_cloth_rest(path(pos[1]),path(pos[2]));
     } else if (pos[0] == "inspect") {
       require(pos.size() == 2, "Usage: inspect ISO");
       Disc disc(path(pos[1]));
@@ -174,12 +205,50 @@ int wmain(int argc, wchar_t **argv) {
         write(output, disc.member("default.xex", 0, disc.size("default.xex")));
       }
       result["xex"] = utf8(output);
+    } else if (pos[0] == "export-scene-textures") {
+      require(pos.size() == 2, "Usage: export-scene-textures GAME_FOLDER");
+      Folder folder(path(pos[1]));
+      require(!fs::exists(folder.root / L"scene_textures.json"),
+              "Scene DDS catalog already exists");
+      result = export_scene_textures(folder, job);
+    } else if (pos[0] == "refresh-texture-catalog") {
+      require(pos.size() == 2 || pos.size() == 3,
+              "Usage: refresh-texture-catalog GAME_FOLDER [BANK_FOLDER]");
+      Folder folder(path(pos[1]));
+      require(fs::exists(folder.root / L"scene_textures.json"),
+              "Organize this installation before refreshing its textures");
+      auto bank = pos.size() == 3 ? "assets/" + pos[2] : std::string();
+      require(bank.empty() || std::any_of(folder.entries.begin(), folder.entries.end(),
+                   [&](const auto &entry) { return entry.second.at("folder") == bank.c_str(); }),
+              "Texture refresh bank is missing");
+      result = export_scene_textures(folder, job, true, bank);
+    } else if (pos[0] == "organize-assets") {
+      require(pos.size() == 2, "Usage: organize-assets GAME_FOLDER");
+      Folder folder(path(pos[1]));
+      validate_tree(folder.root, job);
+      name_assets(folder, job);
+      Folder named(folder.root);
+      result = export_scene_textures(named, job, true);
+      result["runtime"] = prepare_current(named.root, job, false);
     } else if (pos[0] == "import") {
-      require(pos.size() == 3, "Usage: import ISO NEW_FOLDER");
-      result = import_game(path(pos[1]), path(pos[2]), job, expected);
-    } else if (pos[0] == "prepare") {
-      require(pos.size() == 2, "Usage: prepare GAME_FOLDER");
-      result = prepare(path(pos[1]), job);
+      require(pos.size() == 3 || (pos.size() == 4 &&
+                  (pos.back() == "--named-assets" || pos.back() == "--legacy-layout")),
+              "Usage: import DISC NEW_FOLDER [--legacy-layout]");
+      result = import_game(path(pos[1]), path(pos[2]), job, expected,
+                           pos.back() != "--legacy-layout");
+    } else if (pos[0] == "prepare" || pos[0] == "prepare-if-needed") {
+      require(pos.size() == 2, "Usage: prepare[-if-needed] GAME_FOLDER");
+      result = prepare_current(path(pos[1]), job, pos[0] == "prepare-if-needed");
+    } else if (pos[0] == "asset-state") {
+      require(pos.size() == 2, "Usage: asset-state GAME_FOLDER");
+      auto root = longpath(fs::canonical(longpath(path(pos[1]))));
+      result = {{"inputs", asset_metadata_state(root, job, false)}};
+    } else if (pos[0] == "initialize-overlay") {
+      require(pos.size() == 4, "Usage: initialize-overlay STOCK STAGE BANK_LIST_JSON");
+      result = initialize_sparse_overlay(path(pos[1]), path(pos[2]), json(path(pos[3])), job);
+    } else if (pos[0] == "prepare-overlay") {
+      require(pos.size() == 3, "Usage: prepare-overlay STAGE STOCK");
+      result = prepare(path(pos[1]), job, fs::canonical(path(pos[2])));
     } else
       throw std::runtime_error("Unknown native asset tool command");
     std::cout << result.dump(-1, ' ', true) << "\n";

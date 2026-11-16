@@ -10,6 +10,56 @@ sys.path.insert(0, str(ROOT/'tools'))
 from prepare_native_gpu_sdk import patch_backend, patch_common, prepare_native_gpu
 
 
+def test_float_upload_packing_preserves_sparse_and_dense_layouts(tmp_path):
+    compiler = shutil.which('clang++')
+    sdk = ROOT/'port/sdk-vulkan/include'
+    if not compiler or not (sdk/'rex/graphics/native_constants.h').is_file():
+        pytest.skip('Requires the prepared native SDK and clang++')
+    source = tmp_path/'pack.cpp'
+    source.write_text(r'''
+#include <rex/graphics/native_constants.h>
+#include <array>
+#include <cassert>
+#include <random>
+int main() {
+  std::mt19937_64 random(465);
+  std::array<uint32_t, 1024> registers;
+  for (auto& word : registers) word = uint32_t(random());
+  for (unsigned trial = 0; trial < 8192; ++trial) {
+    uint64_t bitmap[4]{};
+    for (auto& word : bitmap) {
+      switch (trial % 6) {
+        case 0: word = 0; break;
+        case 1: word = UINT64_MAX; break;
+        case 2: word = UINT64_C(1) << (random() % 64); break;
+        case 3: word = UINT64_MAX << (random() % 64); break;
+        case 4: word = 0x5555555555555555ull; break;
+        default: word = random(); break;
+      }
+    }
+    std::array<uint8_t, 4098> expected, actual;
+    expected.fill(0xCD);
+    actual = expected;
+    size_t offset = 1;
+    for (unsigned i = 0; i < 256; ++i) {
+      if (bitmap[i / 64] & (UINT64_C(1) << (i % 64))) {
+        std::memcpy(expected.data() + offset, registers.data() + i * 4, 16);
+        offset += 16;
+      }
+    }
+    rex::graphics::ch2k8::PackFloatConstants(actual.data() + 1, registers.data(), bitmap);
+    assert(expected == actual);
+  }
+}
+''')
+    binary = tmp_path/'pack.exe'
+    result = subprocess.run([compiler, '-std=c++23', '-O2', '-DNOMINMAX',
+        '-DSPDLOG_FMT_EXTERNAL', '-DSPDLOG_COMPILED_LIB', '-I', str(sdk),
+        str(source), '-o', str(binary)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    subprocess.run([str(binary)], check=True)
+
+
 def test_native_constant_comparison_and_register_side_effect_boundaries(tmp_path):
     compiler = shutil.which('clang++')
     sdk = ROOT/'port/sdk-vulkan/include'
