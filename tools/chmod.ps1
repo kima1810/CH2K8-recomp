@@ -192,7 +192,13 @@ function Read-Chmod([string]$Root) {
     }
     $uniformNames=@{}
     foreach($u in $m.uniforms){
-        Assert-ModFields $u @('name','template_hash','template_layout_sha256','folder','files')
+        Assert-ModFields $u @('name','template_hash','template_layout_sha256','folder','files') @('neck_shape')
+        if('neck_shape' -cin $u.PSObject.Properties.Name){
+            if(($u.neck_shape -isnot [int] -and $u.neck_shape -isnot [long]) -or
+               $u.neck_shape -lt 0 -or $u.neck_shape -gt 4 -or $u.name -cnotmatch '^u[xyz]'){
+                throw 'A valid neckline belongs to the world alternate bank.'
+            }
+        }
         Assert-ModText $u.name '^(?:sel)?u[haxyz][0-9]{3,4}\.iff$'
         if(-not $m.roster -and $u.name -cnotmatch '^(?:sel)?u[xyz]'){throw 'Automatic roster linking supports alternate slots only; new Home/Away banks require an explicit native roster.'}
         Assert-ModText $u.folder '^uniforms/(?:sel)?u[haxyz][0-9]{3,4}\.iff$'
@@ -450,7 +456,7 @@ function Resolve-Chmods([string]$Game, [string]$ModsRoot, $Selection, [string]$E
             if($bankIndex.ContainsKey([string]$proof.hash)){throw 'Exclusive uniform bank registration collision.'}
             foreach($pixel in $proof.texture_identities){if($uniformPixels.ContainsKey($pixel)){throw 'New uniform textures share an ambiguous owner identity.'};$uniformPixels[$pixel]=$true}
             $bankIndex[[string]$proof.hash]=[pscustomobject]@{hash=$proof.hash;folder=('assets/'+$u.name);added=$true}
-            $registered+=[pscustomobject]@{mod=$mod.manifest.id;name=$u.name;hash=$proof.hash;artwork=$proof.artwork;variant=$proof.variant;selection=$proof.selection;source=(Get-ModPath $mod.root $u.folder);files=$u.files;layout=$proof.layout}
+            $registered+=[pscustomobject]@{mod=$mod.manifest.id;name=$u.name;hash=$proof.hash;artwork=$proof.artwork;variant=$proof.variant;selection=$proof.selection;neck_shape=$u.neck_shape;source=(Get-ModPath $mod.root $u.folder);files=$u.files;layout=$proof.layout}
         }
         foreach($bank in $registered){
             $pair=@($registered|Where-Object{$_.artwork -eq $bank.artwork -and $_.variant -eq $bank.variant})
@@ -972,7 +978,8 @@ function Get-ChmodRosterFiles([string]$Root) {
             # SDK permits profile-neutral headers or the actual storage XUID.
             $h=[IO.File]::ReadAllBytes($headerPath)
             if($h.Length -ne 328){throw 'Unsupported roster content header size.'}
-            $owner=([BitConverter]::ToString($h[308..315])).Replace('-','')
+            $ownerOffset=if([BitConverter]::ToString($h[320..323]) -ceq '54-54-08-18'){312}else{308}
+            $owner=([BitConverter]::ToString($h[$ownerOffset..($ownerOffset+7)])).Replace('-','')
             if($owner -cne '0000000000000000' -and $owner -cne $user.Name){throw 'Roster header XUID differs from its Dummy HDD profile.'}
             [pscustomobject]@{root=[IO.Path]::GetFullPath($Root);relative=$relative;header=$header;file=$payloadPath;header_file=$headerPath;name=$package.Name}
         }
@@ -1013,7 +1020,11 @@ function Restore-ChmodRosterActivation([string]$Baseline,[string]$ProfileRoot,[s
 function Sync-ChmodRosterActivation([string]$Baseline,[string]$ProfileRoot,[string]$State,[string[]]$Roots,$Plan,[string]$VanillaGame) {
     $null=[IO.Directory]::CreateDirectory($State)
     Restore-ChmodRosterActivation $Baseline $ProfileRoot $State
-    $required=@($Plan.uniforms|Where-Object{-not $_.selection -and $_.variant -ge 2}|ForEach-Object{[ordered]@{artwork=$_.artwork;variant=$_.variant;required=$true}})
+    $required=@($Plan.uniforms|Where-Object{-not $_.selection -and $_.variant -ge 2}|ForEach-Object{
+        $route=[ordered]@{artwork=$_.artwork;variant=$_.variant;required=$true}
+        if($null -ne $_.neck_shape){$route.neck_shape=$_.neck_shape}
+        $route
+    })
     $alternates=@{}
     if($VanillaGame){
         $vanilla=Invoke-ModContract 'vanilla-uniforms' $VanillaGame 'unused'

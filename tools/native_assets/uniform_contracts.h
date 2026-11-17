@@ -1,5 +1,6 @@
 #pragma once
 #include "folder.h"
+#include "scene_image.h"
 
 // Imports Studio's existing Xbox template layout, never a new IFF dialect.
 // Registration is deliberately limited to native roster-linked uniform names.
@@ -124,6 +125,21 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
       require(!found.empty(),"Missing template texture component");parts.push_back(found);
     }
     if(parts.empty() || parts.size()>2)continue;
+    const auto id=num(r["id"]);
+    // Case-sensitive resource CRCs for jersey_numbers and names.
+    if(parts.size()==2 && (id==0x3e0620f6 || id==0xf2334940) &&
+       is_indexed_texture(originals.at(parts[0]))) {
+      const auto& before=originals.at(parts[1]);
+      if(before!=payloads.at(parts[1])) {
+        require(component_owners.at(parts[1])==std::set<uint32_t>{0x5c369069},
+                "Uniform atlas shares a non-texture component owner");
+        const auto info=describe_indexed_texture(originals.at(parts[0]),before);
+        auto& permitted=writable.at(parts[1]);
+        std::fill_n(permitted.begin(),info.mip_end,true);
+        std::fill(permitted.begin()+info.palette,permitted.end(),true);
+      }
+      continue;
+    }
     Texture info{};Bytes dds;
     try{info=describe(originals.at(parts[0]),parts.size()==2?&originals.at(parts[1]):nullptr);
         dds=export_dds(payloads.at(parts[0]),parts.size()==2?&payloads.at(parts[1]):nullptr);}
@@ -144,7 +160,6 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
     textures.push_back(J{{"path",file},{"record",r["index"]},{"sha256",sha(dds)},
                           {"identity",pixel_hash},{"descriptor",tex_json(info)}});
     ids.push_back(pixel_key);
-    const auto id=num(r["id"]);
     // Retail embedded names use case-sensitive CRCs. Keep the older
     // uppercase identities accepted for existing source-bound templates.
     jersey |= id==0xfe29ee06 || id==0x2f027d1b || id==crc("unifregion") || id==crc("unif");

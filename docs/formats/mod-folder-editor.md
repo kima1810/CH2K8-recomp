@@ -348,3 +348,17 @@ only for a path backed by a current capability. Materials, DDS, native
 rosters and published typed hooks have separate export contracts. Raw archive
 swaps, generic SCNE topology changes, audio, animation, LAYT editing and
 arbitrary DAT overrides have no general CHMOD folder capability today.
+
+### Alternate uniform neckline
+
+A registered world alternate bank may include `neck_shape` in its uniform
+manifest entry. The integer maps to U, V, V triangle, Triangle, or Wishbone
+for values 0 through 4. Unspecified necklines inherit the Home row when the
+launcher adds a route. A specified neckline replaces the shape bits while the
+rest of the Home characteristics carry over. The selection bank uses that same
+route. With active mods the launcher enables installed alternate pairs and
+clears existing uniform unlock codes in supported native roster saves.
+
+New uniform banks may also override the validated indexed `jersey_numbers` and
+`names` mip and palette data. The bank retains the original glyph metrics and
+aligned layout.
