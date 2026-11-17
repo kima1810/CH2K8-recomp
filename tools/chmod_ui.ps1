@@ -2,6 +2,7 @@
 function Show-ChmodView($Owner, [string]$Game, [string]$ModsRoot, [string]$Settings, [string]$PreviewOutput, [string]$Executable, [string]$Renderer) {
     $dialog=New-Object System.Windows.Forms.Form
     $dialog.Text='CH2K8 Mods'
+    $dialog.AllowDrop=$true
     $dialog.ClientSize=New-Object Drawing.Size(900,670)
     $dialog.MinimumSize=$dialog.Size
     $dialog.StartPosition='CenterParent'
@@ -45,9 +46,9 @@ function Show-ChmodView($Owner, [string]$Game, [string]$ModsRoot, [string]$Setti
         $item=if($list.SelectedItems.Count){$list.SelectedItems[0].Tag}
         $manifest=if($item){$item.manifest}
         $position=if($item){$item.priority}else{-1}
-        $canToggle=$manifest -or $position -ge 0
+        $canToggle=$manifest -or ($item -and $item.members.Count) -or $position -ge 0
         $buttons['toggle'].Enabled=[bool]$canToggle
-        $buttons['toggle'].Text=if($position -ge 0){'Disable'}else{'Enable'}
+        $buttons['toggle'].Text=if($item.group){if($item.allEnabled){'Disable folder'}else{'Enable folder'}}elseif($position -ge 0){'Disable'}else{'Enable'}
         $buttons['higher'].Enabled=($position -ge 0 -and $position -lt $state.enabled.Count-1)
         $buttons['lower'].Enabled=($position -gt 0)
         $buttons['checkUpdate'].Enabled=[bool]($manifest -and $manifest.update_source)
@@ -55,6 +56,8 @@ function Show-ChmodView($Owner, [string]$Game, [string]$ModsRoot, [string]$Setti
             $state.update.id -ceq $manifest.id -and $state.update.installed -ceq $manifest.version)
         if (-not $item) {
             $details.Text='Select an installed mod to inspect its requirements and priority.'
+        } elseif ($item.group) {
+            $details.Text="$($item.members.Count) packages in $($item.group). Select a child row to manage it individually."
         } elseif (-not $manifest) {
             $details.Text=$item.error + [Environment]::NewLine + $item.root
         } else {
@@ -114,10 +117,29 @@ function Show-ChmodView($Owner, [string]$Game, [string]$ModsRoot, [string]$Setti
                     }
                 }
             }
+            $groups=@{}
+            foreach($entry in $state.installed){
+                if(-not $entry.manifest -or -not $entry.relative){continue}
+                $parent=Split-Path -Path $entry.relative -Parent
+                while($parent){
+                    $key=$parent.Replace('\','/')
+                    if(-not $groups.ContainsKey($key)){$groups[$key]=@()}
+                    $groups[$key]+=$entry.manifest
+                    $parent=Split-Path -Path $parent -Parent
+                }
+            }
+            foreach($group in ($groups.Keys | Sort-Object)){
+                $members=@($groups[$group] | Group-Object id | ForEach-Object {
+                    $_.Group | Sort-Object { [version]$_.version } -Descending | Select-Object -First 1
+                })
+                $enabled=@($members | Where-Object {$m=$_; @($state.enabled | Where-Object {$_.id -ceq $m.id -and $_.version -ceq $m.version}).Count})
+                $items+=[pscustomobject]@{key='group:'+ $group;name='Folder: '+$group;group=$group;members=$members;
+                    allEnabled=($enabled.Count -eq $members.Count);enabledCount=$enabled.Count;priority=-1;version='';author=''}
+            }
             $filter=$search.Text.Trim()
             foreach($item in ($items | Sort-Object @{Expression={$_.priority -lt 0}},@{Expression={$_.priority};Descending=$true},name,version)){
                 if($filter -and "$($item.name) $($item.author) $($item.key)".IndexOf($filter,[StringComparison]::OrdinalIgnoreCase) -lt 0){continue}
-                $status=if($item.error){
+                $status=if($item.group){"$($item.enabledCount)/$($item.members.Count) enabled"}elseif($item.error){
                     if($item.priority -ge 0){'Enabled - broken'}else{'Invalid package'}
                 }elseif($item.priority -ge 0){"Enabled / $($item.priority+1)"}else{'Disabled'}
                 $row=New-Object System.Windows.Forms.ListViewItem($item.name)
@@ -181,17 +203,49 @@ function Show-ChmodView($Owner, [string]$Game, [string]$ModsRoot, [string]$Setti
         $message.Text=$Status
         if($Plan -and $Plan.conflicts.Count){$message.AppendText([Environment]::NewLine+($Plan.conflicts -join [Environment]::NewLine))}
     }
+    $installFolder={
+        param([string]$Path)
+        $receipt=Install-Chmod $Path $ModsRoot -ModFolder
+        $message.Text=if($receipt.packages){"Installed $($receipt.packages) packages in $($receipt.name)."}else{"Installed $($receipt.name)."}
+        & $refresh
+    }
+    $dragEnter={
+        if($_.Data.GetDataPresent([Windows.Forms.DataFormats]::FileDrop)){ $_.Effect=[Windows.Forms.DragDropEffects]::Copy }
+    }
+    $dragDrop={
+        try {
+            foreach($path in $_.Data.GetData([Windows.Forms.DataFormats]::FileDrop)){& $installFolder $path}
+        } catch {$message.Text=$_.Exception.Message}
+    }
+    $list.AllowDrop=$true
+    foreach($surface in @($dialog,$list)){
+        $surface.Add_DragEnter($dragEnter)
+        $surface.Add_DragDrop($dragDrop)
+    }
     $actions=@(
         @('install','Import legacy archive', {
             $picker=New-Object System.Windows.Forms.OpenFileDialog; $picker.Filter='CHMOD package (*.chmod)|*.chmod'
             try { if($picker.ShowDialog($dialog) -eq 'OK') { $m=Install-Chmod $picker.FileName $ModsRoot; $message.Text="Installed $($m.name) $($m.version). Enable it to select this version; the previous version is retained."; & $refresh } } finally { $picker.Dispose() }
         }),
-        @('import','Install mod folder', {
+        @('import','Install mod or collection', {
             $picker=New-Object System.Windows.Forms.FolderBrowserDialog
-            try { if($picker.ShowDialog($dialog) -eq 'OK') { $null=Install-Chmod $picker.SelectedPath $ModsRoot -ModFolder; & $refresh } } finally { $picker.Dispose() }
+            try { if($picker.ShowDialog($dialog) -eq 'OK') { & $installFolder $picker.SelectedPath } } finally { $picker.Dispose() }
         }),
         @('toggle','Enable', {
             $item=$list.SelectedItems[0].Tag
+            if($item.group){
+                $members=@($item.members)
+                if($item.allEnabled -or $item.enabledCount -eq $members.Count){
+                    $keys=@($item.members | ForEach-Object {"$($_.id)/$($_.version)"})
+                    $next=@($state.enabled | Where-Object {"$($_.id)/$($_.version)" -cnotin $keys})
+                }else{
+                    $ids=@($members.id)
+                    $next=@($state.enabled | Where-Object {$_.id -cnotin $ids})
+                    $next+=@($members | Sort-Object id | ForEach-Object {[pscustomobject]@{id=$_.id;version=$_.version}})
+                }
+                & $saveSelection -Selection $next -Status 'Folder selection saved. Use Check selection to validate dependencies.'
+                return
+            }
             if($item.priority -ge 0){
                 $next=@(for($i=0;$i -lt $state.enabled.Count;$i++){if($i -ne $item.priority){$state.enabled[$i]}})
                 & $saveSelection -Selection $next -Status 'Disabled for the next launch. Use Check selection to review remaining dependencies.'

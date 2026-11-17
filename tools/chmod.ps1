@@ -284,8 +284,75 @@ function Write-ModJson([string]$Path, $Value, [string]$ExpectedHash) {
         if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temp,$Path,[System.Management.Automation.Language.NullString]::Value) } else { [IO.File]::Move($temp,$Path) }
     } finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
 }
+function Find-ChmodFolders([string]$Root, [switch]$IncludeInvalid, [switch]$MetadataOnly) {
+    $base=[IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $pending=New-Object 'System.Collections.Generic.Stack[string]'
+    $pending.Push($base)
+    $visited=0
+    while($pending.Count){
+        $path=$pending.Pop()
+        if(++$visited -gt 8192){throw 'Mod collection exceeds the folder discovery limit.'}
+        try {
+            $relative=if($path -ceq $base){''}else{$path.Substring($base.Length+1).Replace('\','/')}
+            $manifestPath=if($relative){Get-ModPath $base ($relative+'/mod.json') -SavePath}else{Get-ModPath $base 'mod.json'}
+            if([IO.File]::Exists($manifestPath)){
+                $manifest=if($MetadataOnly){Read-ModJson $manifestPath}else{Read-Chmod $path}
+                [pscustomobject]@{root=$path;relative=$relative;manifest=$manifest;error=$null}
+                continue
+            }
+            $children=@(Get-ChildItem -LiteralPath $path -Directory | Where-Object {-not $_.Name.StartsWith('.')} | Sort-Object Name -Descending)
+            foreach($child in $children){$pending.Push($child.FullName)}
+        } catch {
+            if($IncludeInvalid){[pscustomobject]@{root=$path;relative=$relative;manifest=$null;error=$_.Exception.Message}}
+        }
+    }
+}
+
+function Install-ChmodCollection([string]$Source, [string]$ModsRoot) {
+    $source=[IO.Path]::GetFullPath($Source).TrimEnd('\')
+    $null=[IO.Directory]::CreateDirectory($ModsRoot)
+    $name=[IO.Path]::GetFileName($source)
+    $destination=Get-ModPath $ModsRoot $name -SavePath
+    if([IO.Directory]::Exists($destination) -or [IO.File]::Exists($destination)){throw 'A folder with this collection name is already installed.'}
+    $stage=Get-ModPath $ModsRoot ('.install-'+[guid]::NewGuid().ToString('N'))
+    if($stage.StartsWith($source+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Install destination must be outside the imported folder.'}
+    $packages=@(Find-ChmodFolders $source -IncludeInvalid)
+    if(-not $packages.Count){throw 'No mod.json packages found in the collection.'}
+    $seen=@{}
+    foreach($item in @(Get-InstalledChmods $ModsRoot)){$seen["$($item.manifest.id)/$($item.manifest.version)"]=$true}
+    foreach($item in $packages){
+        if($item.error){throw $item.error}
+        $key="$($item.manifest.id)/$($item.manifest.version)"
+        if($seen.ContainsKey($key)){throw "Mod version already exists: $key"}
+        $seen[$key]=$true
+    }
+    $null=[IO.Directory]::CreateDirectory($stage)
+    try {
+        foreach($item in $packages){
+            $target=Get-ModPath $stage $item.relative -SavePath
+            $null=[IO.Directory]::CreateDirectory($target)
+            foreach($file in Get-ModTree $item.root){
+                $out=Get-ModPath $target $file.FullName.Substring($item.root.Length+1).Replace('\','/')
+                if($file.PSIsContainer){$null=[IO.Directory]::CreateDirectory($out)}
+                else{[IO.File]::Copy($file.FullName,$out)}
+            }
+            $null=Read-Chmod $target
+        }
+        [IO.Directory]::Move($stage,$destination)
+        [pscustomobject]@{name=$name;packages=$packages.Count}
+    } finally {
+        if([IO.Directory]::Exists($stage)){
+            $null=Get-ModPath $ModsRoot ([IO.Path]::GetFileName($stage))
+            [IO.Directory]::Delete($stage,$true)
+        }
+    }
+}
+
 function Install-Chmod([string]$Source, [string]$ModsRoot, [switch]$ModFolder) {
-    if($ModFolder -and -not [IO.Directory]::Exists($Source)){throw 'Choose a folder containing mod.json.'}
+    if($ModFolder -and -not [IO.Directory]::Exists($Source)){throw 'Choose a mod folder or collection.'}
+    if([IO.Directory]::Exists($Source) -and -not [IO.File]::Exists((Join-Path $Source 'mod.json'))){
+        return Install-ChmodCollection $Source $ModsRoot
+    }
     $null = [IO.Directory]::CreateDirectory($ModsRoot)
     $stage = Get-ModPath $ModsRoot ('.install-' + [guid]::NewGuid().ToString('N'))
     $null = [IO.Directory]::CreateDirectory($stage)
@@ -352,29 +419,7 @@ function Install-Chmod([string]$Source, [string]$ModsRoot, [switch]$ModFolder) {
 }
 function Get-InstalledChmods([string]$ModsRoot, [switch]$IncludeInvalid) {
     if (-not [IO.Directory]::Exists($ModsRoot)) { return }
-    foreach ($id in Get-ChildItem -LiteralPath $ModsRoot -Directory) {
-        if ($id.Name.StartsWith('.')) { continue }
-        $candidate = $id.FullName
-        try {
-            $null = Get-ModPath $ModsRoot ($id.Name+'/mod.json')
-            $folders = if (Test-Path -LiteralPath (Join-Path $candidate 'mod.json')) {
-                @($id)
-            } else {
-                @(Get-ChildItem -LiteralPath $candidate -Directory)
-            }
-        } catch {
-            if ($IncludeInvalid) { [pscustomobject]@{root=$candidate;manifest=$null;error=$_.Exception.Message} }
-            continue
-        }
-        foreach ($folder in $folders) {
-            try {
-                $manifest = Read-Chmod $folder.FullName
-                [pscustomobject]@{root=$folder.FullName;manifest=$manifest;error=$null}
-            } catch {
-                if ($IncludeInvalid) { [pscustomobject]@{root=$folder.FullName;manifest=$null;error=$_.Exception.Message} }
-            }
-        }
-    }
+    Find-ChmodFolders $ModsRoot -IncludeInvalid:$IncludeInvalid
 }
 
 function Invoke-ModContract([string]$Command,[string]$Source,[string]$Other,[string[]]$Extra=@()) {
@@ -414,7 +459,8 @@ function Assert-ChmodDll([string]$File) {
 }
 function Resolve-Chmods([string]$Game, [string]$ModsRoot, $Selection, [string]$ExpectedXex=$script:ChmodXex,[bool]$AllowCode=$false) {
     if ($Selection -isnot [array]) { throw 'Mod selection must be an array in low-to-high priority order.' }
-    $installed=@(Get-InstalledChmods $ModsRoot -IncludeInvalid); $active=@(); $ids=@{}; $replacements=@{}; $conflicts=@(); $roster=$null;$uniforms=@();$extensions=@()
+    if (-not $Selection.Count) { return [pscustomobject]@{active=@(); replacements=@(); conflicts=@();roster=$null;uniforms=@();extensions=@()} }
+    $installed=@(if([IO.Directory]::Exists($ModsRoot)){Find-ChmodFolders $ModsRoot -IncludeInvalid -MetadataOnly}); $active=@(); $ids=@{}; $replacements=@{}; $conflicts=@(); $roster=$null;$uniforms=@();$extensions=@()
     foreach ($s in $Selection) {
         Assert-ModFields $s @('id','version')
         Assert-ModText $s.id '^[a-z0-9]+(?:[.-][a-z0-9]+)*$'
@@ -428,7 +474,12 @@ function Resolve-Chmods([string]$Game, [string]$ModsRoot, $Selection, [string]$E
             if ($broken.Count) { throw "Selected mod $($s.id) $($s.version) is invalid: $($broken[0].error)" }
             throw "Missing, ambiguous or duplicate selected mod: $($s.id) $($s.version)"
         }
-        $ids[$s.id]=$s.version; $active += $found[0]
+        $entry=$found[0]
+        $entry.manifest=Read-Chmod $entry.root
+        if($entry.manifest.id -cne $s.id -or $entry.manifest.version -cne $s.version){
+            throw 'Selected manifest changed during resolution.'
+        }
+        $ids[$s.id]=$s.version; $active += $entry
     }
     if (-not $active.Count) { return [pscustomobject]@{active=@(); replacements=@(); conflicts=@();roster=$null;uniforms=@();extensions=@()} }
     if ((Get-ModHash (Get-ModPath $Game 'default.xex')) -cne $ExpectedXex) { throw 'Unsupported game/XEX revision.' }

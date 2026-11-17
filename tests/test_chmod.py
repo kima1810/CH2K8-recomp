@@ -245,3 +245,32 @@ def test_checked_in_example_installs_and_rejects_retail_binding(tmp_path):
     ps(tmp_path,'$null=Install-Chmod $args[1] $args[2]',example,tmp_path/'mods')
     m=json.loads((tmp_path/'mods/example.synthetic-art/1.0.0/mod.json').read_text())
     assert m['requires']['xex_sha256']==IDENTITY
+
+def test_nested_collection_preserves_paths_and_resolves_children(tmp_path, package):
+    game, folder, manifest = package
+    collection = tmp_path / 'Presentation Overhaul V1.0'
+    child = collection / 'Texture Mods' / 'Menus' / 'Scorebug Pack'
+    shutil.copytree(folder, child)
+    second = collection / 'Texture Mods' / 'Conference Courts' / 'SEC'
+    shutil.copytree(folder, second)
+    other = dict(manifest, id='test.courts')
+    (second / 'mod.json').write_text(json.dumps(other))
+    mods = tmp_path / 'mods'
+    result = ps(tmp_path, """
+$receipt=Install-Chmod $args[1] $args[2] -ModFolder
+if($receipt.packages -ne 2){throw 'Expected both children'}
+$found=@(Get-InstalledChmods $args[2])
+if($found.Count -ne 2){throw 'Expected both installed children'}
+$selection=@($found | ForEach-Object {[pscustomobject]@{id=$_.manifest.id;version=$_.manifest.version}})
+$plan=Resolve-Chmods $args[3] $args[2] $selection -ExpectedXex $args[4]
+if($plan.active.Count -ne 2){throw 'Nested mods did not resolve'}
+if(-not ($plan.replacements[0].file -like '*Presentation Overhaul V1.0*')){throw 'Nested payload path was lost'}
+Write-Output 'nested collection ok'
+""", collection, mods, game, IDENTITY)
+    assert 'nested collection ok' in result.stdout
+    assert (mods / collection.name / 'Texture Mods' / 'Menus' / 'Scorebug Pack' / 'mod.json').is_file()
+    rejected = tmp_path / 'Rejected Collection'
+    shutil.copytree(collection, rejected)
+    result = ps(tmp_path, 'Install-Chmod $args[1] $args[2] -ModFolder', rejected, mods, ok=False)
+    assert 'Mod version already exists' in result.stderr
+    assert not (mods / rejected.name).exists()

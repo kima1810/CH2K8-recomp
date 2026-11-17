@@ -371,3 +371,13 @@ matches that bank. The validator retains the stock bank IDs and isolates BC
 texture identities in the mod overlay. Replacements keep the routes in the
 active roster and do not require a packaged roster. Overlapping whole-bank
 replacements and loose DDS overrides for the same bank are exclusive.
+
+### Nested collections
+
+Drag a collection folder into the Mods window or use **Install mod or collection**.
+A collection contains child package roots with their own `mod.json`, nested
+under optional category directories. Folder names can contain spaces. Install
+preserves the hierarchy and validates each child independently, including its
+512 MiB package limit. There is no aggregate 512 MiB limit for a collection.
+Select a folder row to enable or disable the newest version of each child
+mod together. Select a child row to control its version and priority.
