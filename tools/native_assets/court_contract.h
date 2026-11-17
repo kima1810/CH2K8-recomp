@@ -6,21 +6,164 @@ constexpr size_t GeorgiaGpuSize = 0x214000;
 constexpr size_t GeorgiaArtworkBaseSize = 0x100000;
 constexpr size_t GeorgiaArtworkMipSize = 0x5a000;
 constexpr size_t GeorgiaArtworkSize = GeorgiaArtworkBaseSize + GeorgiaArtworkMipSize;
-constexpr uint32_t GeorgiaBank = 4254803563;
-constexpr uint32_t GeorgiaBumpRecord = 0x92255783;
 constexpr const char *GeorgiaStockGpu =
     "6d388daf7cc94dab8b16039f32adf026ae1b3b4a52724bd6863dec2857c684c9";
 
-inline void georgia_artwork_descriptor(Bytes &cpu) {
-  constexpr size_t slot = 0x90;
+inline void full_floor_artwork_descriptor(Bytes &cpu, size_t slot, size_t gpu_size) {
   put(cpu, slot + 0x60, (2048u << 16) | 1024);
-  put(cpu, slot + 0x6c, GeorgiaGpuSize + 1);
+  put(cpu, slot + 0x6c, uint32_t(gpu_size + 1));
   put(cpu, slot + 0x70, GeorgiaArtworkBaseSize);
   put(cpu, slot + 0x74, GeorgiaArtworkMipSize);
-  put(cpu, slot + 0x94, (be(cpu, slot + 0x94) & ~(511u << 22)) | (64u << 22));
+  put(cpu, slot + 0x94, (be(cpu, slot + 0x94) & ~(511u << 22)) | (64u << 22) | (1u << 31));
   put(cpu, slot + 0x9c, (be(cpu, slot + 0x9c) & ~0x3ffffffu) | 2047 | (1023u << 13));
   put(cpu, slot + 0xa4, (be(cpu, slot + 0xa4) & ~(15u << 6)) | (11u << 6));
   put(cpu, slot + 0xa8, (be(cpu, slot + 0xa8) & 0xfffu) | GeorgiaArtworkBaseSize);
+}
+
+inline size_t court_pointer(const Bytes &cpu, size_t field) {
+  const int64_t target = int64_t(field) + int32_t(be(cpu, field)) - 1;
+  require(target >= 0 && uint64_t(target) < cpu.size(), "Invalid floor SCNE pointer");
+  return size_t(target);
+}
+
+inline double floor_half(unsigned value) {
+  const unsigned exponent = (value >> 10) & 31;
+  require(exponent != 31, "Nonfinite floor UV coordinate");
+  const double mantissa = (value & 1023) / 1024.0;
+  return std::ldexp((value & 0x8000 ? -1.0 : 1.0) *
+                    (exponent ? 1.0 + mantissa : mantissa),
+                    exponent ? int(exponent) - 15 : -14);
+}
+
+inline Bytes full_floor_scene(const Bytes &cpu, const Bytes &gpu) {
+  require(!gpu.empty() && gpu.size() % 4096 == 0, "Floor GPU allocation is not page aligned");
+  auto result = cpu;
+  const auto mesh = court_pointer(cpu, 0x48), material = court_pointer(cpu, 0x38);
+  const auto mesh_count = be(cpu, 0x44), material_count = be(cpu, 0x30);
+  require(mesh_count > 0 && mesh_count <= 32 && material_count > 0 && material_count <= 128,
+          "Unsupported floor mesh or material count");
+  bounds(cpu, mesh, mesh_count * 176);
+  bounds(cpu, material, material_count * 40);
+  constexpr uint32_t floor = 0xbe45d62e, wood_shader = 0x0b16f952, light_shader = 0xa784c4df;
+  require((be(cpu, mesh + 4) == floor || be(cpu, mesh+4)==0xbe56eb5c) &&
+          be(cpu, material + 8) == wood_shader,
+          "Floor does not use the UGA wood shader layout");
+  const auto params = court_pointer(cpu, material + 32);
+  require(be(cpu, params + 164) == 0x2701 && be(cpu, params + 204) == 0x3f800000 &&
+          be(cpu, params + 208) == 0x3f800000 && !be(cpu, params + 212) && !be(cpu, params + 216),
+          "Unknown wood albedo sampler or transform");
+  const auto texture = court_pointer(cpu, 0x24);
+  const auto format=be(cpu, texture+0x98)&255;
+  require(be(cpu, 0x20) && (be(cpu, texture+0x94) >> 31) &&
+          format==0x52, "Unknown floor base slot");
+
+  const auto declaration = court_pointer(cpu, mesh + 156);
+  require(be(cpu, mesh+152) >= 3 && be(cpu, declaration) == 0x46e6cb71 &&
+          be(cpu, declaration+8) == 0x20000000 && be(cpu, declaration+12) == 0x002a23b9 &&
+          be(cpu, declaration+128) == 0xf51cd0cf &&
+          be(cpu, declaration+136) == 0x201c0000 && be(cpu, declaration+140) == 0x002c235f,
+          "Unsupported full-floor vertex declaration");
+  const auto streams = court_pointer(cpu, mesh + 136);
+  const auto count = be(cpu, streams+8), stride = be(cpu, streams+28);
+  const auto start = be(cpu, streams+36) - 1;
+  require(count >= 8 && count <= 4096 && stride >= 32 && stride <= 64, "Unsupported floor vertex stream");
+  bounds(gpu, start, uint64_t(count) * stride);
+  const auto draw=court_pointer(cpu,mesh+128);
+  require(be(cpu,mesh+124)==1 && be(cpu,draw)==6 && be(cpu,draw+32)==0 &&
+          (be(cpu,mesh+0xa4)&65535)==16,"Unknown principal floor draw");
+  const auto first=be(cpu,draw+4), length=be(cpu,draw+8), index_base=be(cpu,mesh+0xac)-1;
+  const auto index_count=be(cpu,mesh+0xa8);
+  require(first <= index_count && length <= index_count-first,"Invalid principal floor draw range");
+  bounds(gpu,index_base,uint64_t(index_count)*2);
+  std::set<unsigned> vertices;
+  for (size_t i=first;i<size_t(first)+length;++i) {
+    const auto off=index_base+i*2;
+    const unsigned v=(unsigned(gpu[off])<<8)|gpu[off+1];
+    if (v==65535) continue;
+    require(v<count,"Floor index outside vertex stream");
+    vertices.insert(v);
+  }
+  require(vertices.size()>=8,"Not enough floor vertices to recover the UGA mapping");
+  // Fit the stock UVs to the common UGA artwork coordinates. Only albedo
+  // receives this transform, so the original UVs still drive the bump map.
+  struct Axis {
+    double sum=0, uv_sum=0, uv_square=0, cross=0;
+    void add(double uv, double artwork) {
+      sum += artwork; uv_sum += uv; uv_square += uv*uv; cross += uv*artwork;
+    }
+  };
+  auto coordinates = [&](size_t i) {
+    const auto off = start + i * stride;
+    const auto uv = be(gpu, off+28);
+    const double x = std::bit_cast<float>(be(gpu, off)), z = std::bit_cast<float>(be(gpu, off+8));
+    require(std::isfinite(x) && std::isfinite(z) && std::abs(x)<3000 && std::abs(z)<3000,
+            "Unsupported floor world coordinates");
+    // UGA's mapped position/UV pairs define this common template.
+    return std::array{floor_half(uv >> 16), floor_half(uv & 65535),
+                     z * 0.00027335939754 + 0.49997811436,
+                     x * 0.00044129545003 + 0.49998535131};
+  };
+  std::array<Axis,2> axes{};
+  for (const auto i:vertices) {
+    auto p=coordinates(i);
+    for (size_t j=0;j<2;++j) axes[j].add(p[j],p[j+2]);
+  }
+  std::array<float,2> scale{}, shift{};
+  const auto sample_count=vertices.size();
+  for (size_t j=0;j<2;++j) {
+    const auto &a=axes[j];
+    const auto denom=sample_count*a.uv_square-a.uv_sum*a.uv_sum;
+    require(denom > 0.001, "Degenerate floor UV axis");
+    scale[j]=float((sample_count*a.cross-a.uv_sum*a.sum)/denom);
+    shift[j]=float((a.sum-scale[j]*a.uv_sum)/sample_count);
+  }
+  // Keep the published UGA transform byte-exact for matching UVs.
+  const std::array<float,2> uga_scale{std::bit_cast<float>(0x3dc72c9fu),std::bit_cast<float>(0xbe0e63d8u)};
+  const std::array<float,2> uga_shift{std::bit_cast<float>(0x3ee71b17u),std::bit_cast<float>(0x3f11c962u)};
+  bool uga_uvs=true;
+  for (const auto i:vertices) {
+    const auto p=coordinates(i);
+    for (size_t j=0;j<2;++j) {
+      require(std::abs(p[j]*scale[j]+shift[j]-p[j+2])<0.004, "Floor UVs do not fit the UGA template");
+      uga_uvs &= std::abs(p[j]*uga_scale[j]+uga_shift[j]-p[j+2])<0.004;
+    }
+  }
+  if (uga_uvs) { scale=uga_scale; shift=uga_shift; }
+  for (size_t j=0;j<2;++j) {
+    put(result, params+204+j*4, std::bit_cast<uint32_t>(scale[j]));
+    put(result, params+212+j*4, std::bit_cast<uint32_t>(shift[j]));
+  }
+  for (size_t i=1;i<material_count;++i) {
+    const auto row=material+i*40;
+    if (be(cpu,row+8)==wood_shader)
+      put(result,court_pointer(cpu,row+32)+180,0);
+  }
+
+  unsigned lighting_runs=0;
+  for (size_t i=0;i<mesh_count;++i) {
+    const auto part=mesh+i*176, draw=court_pointer(cpu,part+128);
+    const auto runs=be(cpu,part+124);
+    require(runs>0 && runs<=128, "Unsupported floor draw count");
+    bounds(cpu,draw,runs*48);
+    size_t first=0, kept=0;
+    for (size_t j=0;j<runs;++j) {
+      const auto run=draw+j*48;
+      const auto mat=be(cpu,run+32);
+      require(be(cpu,run)==6 && mat<material_count,"Unsupported floor draw layout");
+      const bool lighting=be(cpu,material+mat*40+8)==light_shader;
+      lighting_runs+=lighting;
+      if (!(lighting || (i==0 && mat==0))) continue;
+      if (!kept) first=j;
+      require(j==first+kept,"Floor lighting draws are interleaved with artwork");
+      ++kept;
+    }
+    require(i!=0 || kept==1,"Ambiguous principal court floor draw");
+    put(result,part+124,uint32_t(kept));
+    if (first) put(result,part+128,be(cpu,part+128)+uint32_t(first*48));
+  }
+  require(lighting_runs>0,"No recognized stock lighting pass");
+  full_floor_artwork_descriptor(result, texture, gpu.size());
+  return result;
 }
 
 // Xbox s256 floor.scne. Source hashes pin the exact topology, stream
@@ -29,11 +172,19 @@ inline J validate_court_scene(const fs::path& source_cpu, const fs::path& source
                               const fs::path& edited_cpu, const fs::path& edited_gpu) {
   const auto cpu = read(source_cpu, 64ull << 20);
   const auto gpu = read(source_gpu, 64ull << 20);
-  require(sha(cpu) == "9858346b2662ff7000dc551c3ea74ead8d64cca2f90c5a4a5854887a5bc2f690" &&
-          sha(gpu) == GeorgiaStockGpu,
-          "Court SCNE source layout is not supported");
   const auto changed_cpu = read(edited_cpu, 64ull << 20);
   const auto changed_gpu = read(edited_gpu, 64ull << 20);
+  const bool georgia = sha(cpu) == "9858346b2662ff7000dc551c3ea74ead8d64cca2f90c5a4a5854887a5bc2f690" &&
+                       sha(gpu) == GeorgiaStockGpu;
+  auto is_full_floor = [&] {
+    return changed_gpu.size()==gpu.size()+GeorgiaArtworkSize &&
+           std::equal(gpu.begin(),gpu.end(),changed_gpu.begin()) &&
+           changed_cpu==full_floor_scene(cpu,gpu);
+  };
+  if (!georgia || is_full_floor()) {
+    require(georgia || is_full_floor(), "Court edit differs from the full-floor conversion");
+    return J{{"ready",true},{"stock_passes",true},{"full_resolution",true}};
+  }
   const bool full_resolution = gpu.size() == GeorgiaGpuSize &&
                                changed_gpu.size() == GeorgiaGpuSize + GeorgiaArtworkSize;
   require(cpu.size() == changed_cpu.size() &&
@@ -77,7 +228,7 @@ inline J validate_court_scene(const fs::path& source_cpu, const fs::path& source
       for (unsigned i = 1; i < 19; ++i)
         word(params(i) + 180, 0);
       if (full_resolution)
-        georgia_artwork_descriptor(expected);
+        full_floor_artwork_descriptor(expected,0x90,GeorgiaGpuSize);
       if (full_resolution && changed_cpu != expected) {
         for (size_t part : {3456, 3632, 3808}) word(part + 0x7C, 0);
         if (changed_cpu != expected) {

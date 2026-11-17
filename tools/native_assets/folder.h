@@ -359,34 +359,37 @@ struct Folder {
                           num(l["records"][0]["type"]) == 0xc61649b2 &&
                           cs.size() == 1 && num(c["start"]) == 0 &&
                           num(c["end"]) == num(b["logical"]);
-            const bool georgia_floor = num(e["hash"]) == GeorgiaBank &&
-                num(b["index"]) == 1 && c["path"] == "floor.scne/scene_gpu.dat" &&
-                old == GeorgiaGpuSize && n == old + GeorgiaArtworkSize;
-            if (georgia_floor) {
-              auto gpu = read(f, GeorgiaGpuSize + GeorgiaArtworkSize);
-              require(sha(std::span(gpu).first(GeorgiaGpuSize)) == GeorgiaStockGpu,
-                      "Expanded Georgia floor changed the original GPU region");
-              // The bump TXTR is the only record following this SCNE in block 1.
-              // Move its offset while leaving its pixel bytes and CPU header intact.
+            const bool expanded_floor = num(b["index"]) == 1 &&
+                c["path"] == "floor.scne/scene_gpu.dat" && old % 4096 == 0 &&
+                n == old + GeorgiaArtworkSize &&
+                std::regex_match(e["folder"].get<std::string>(),std::regex("assets/s[0-9]{3}\\.iff"));
+            if (expanded_floor) {
+              auto gpu = read(f, 64ull << 20);
+              require(sha(std::span(gpu).first(old)) == c["sha256"].get<std::string>(),
+                      "Expanded floor changed the original GPU region");
+              // Rebase every record following the expanded floor in block 1.
               const auto table = 27u + be(header, 28);
-              unsigned moved = 0;
+              unsigned owners = 0;
               for (const auto &record : l["records"]) {
                 if (record["offsets"].size() < 2)
                   continue;
                 const auto previous = num(record["offsets"][1]);
+                if (previous == num(c["start"])) {
+                  require(num(record["id"]) == 0xbe45d62e && num(record["type"]) == 0xe26c9b5d,
+                          "Expanded floor GPU region has an unexpected owner");
+                  ++owners;
+                }
                 if (previous < num(c["end"]) || previous == UINT32_MAX)
                   continue;
                 const auto field = table + 4 * num(record["index"]);
                 const auto row = field + be(header, field) - 1;
-                require(num(record["id"]) == GeorgiaBumpRecord &&
-                        be(header, row) == GeorgiaBumpRecord &&
+                require(be(header, row) == num(record["id"]) &&
                         be(header, row + 16) == previous &&
-                        previous == num(c["end"]), "Unexpected Georgia bump offset");
+                        previous <= UINT32_MAX - GeorgiaArtworkSize, "Unexpected floor bank offset");
                 bounds(header, row + 16, 4);
                 put(header, row + 16, previous + GeorgiaArtworkSize);
-                ++moved;
               }
-              require(moved == 1, "Missing Georgia bump texture after the floor");
+              require(owners == 1, "Expanded floor GPU region must have a single owner");
             } else {
               require(roster && n >= old && n % 2 == 0 && n <= 64ull << 20,
                       "Unsupported loose resource resizing");

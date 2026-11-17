@@ -1,5 +1,9 @@
 # CHMOD schema 1 / mod API 1.3.0
 
+For the current folder-first layout, editor export rules, and current runtime
+variants, see the [mod folder editor contract](mod-folder-editor.md). The
+original API 1.3 court and extension notes follow.
+
 ## Court SCNE assets
 
 `court.scene` is a schema 1 asset capability for the source-verified Xbox

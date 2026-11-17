@@ -144,7 +144,11 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
     textures.push_back(J{{"path",file},{"record",r["index"]},{"sha256",sha(dds)},
                           {"identity",pixel_hash},{"descriptor",tex_json(info)}});
     ids.push_back(pixel_key);
-    auto id=num(r["id"]);jersey|=id==crc("unifregion") || id==crc("unif");shorts|=id==crc("shortregion") || id==crc("short");
+    const auto id=num(r["id"]);
+    // Retail embedded names use case-sensitive CRCs. Keep the older
+    // uppercase identities accepted for existing source-bound templates.
+    jersey |= id==0xfe29ee06 || id==0x2f027d1b || id==crc("unifregion") || id==crc("unif");
+    shorts |= id==0x055fbdef || id==0x8f2890a2 || id==crc("shortregion") || id==crc("short");
   }
   require(!textures.empty(),"Uniform template has no supported native textures");
   require(match[1].matched || (jersey && shorts),"World uniform template lacks verified jersey/shorts artwork records");
