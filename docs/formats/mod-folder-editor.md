@@ -362,3 +362,12 @@ clears existing uniform unlock codes in supported native roster saves.
 New uniform banks may also override the validated indexed `jersey_numbers` and
 `names` mip and palette data. The bank retains the original glyph metrics and
 aligned layout.
+
+### Stock uniform replacement
+
+A world/selection pair can replace existing stock banks when each
+`template_hash` is the hash of the exact target name and the layout digest
+matches that bank. The validator retains the stock bank IDs and isolates BC
+texture identities in the mod overlay. Replacements keep the routes in the
+active roster and do not require a packaged roster. Overlapping whole-bank
+replacements and loose DDS overrides for the same bank are exclusive.

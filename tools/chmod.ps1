@@ -200,7 +200,6 @@ function Read-Chmod([string]$Root) {
             }
         }
         Assert-ModText $u.name '^(?:sel)?u[haxyz][0-9]{3,4}\.iff$'
-        if(-not $m.roster -and $u.name -cnotmatch '^(?:sel)?u[xyz]'){throw 'Automatic roster linking supports alternate slots only; new Home/Away banks require an explicit native roster.'}
         Assert-ModText $u.folder '^uniforms/(?:sel)?u[haxyz][0-9]{3,4}\.iff$'
         Assert-ModText $u.template_layout_sha256 '^[0-9a-f]{64}$'
         if(($u.template_hash -isnot [int] -and $u.template_hash -isnot [long]) -or $u.template_hash -lt 0 -or $u.template_hash -gt 4294967295){throw 'Invalid uniform template hash.'}
@@ -448,19 +447,30 @@ function Resolve-Chmods([string]$Game, [string]$ModsRoot, $Selection, [string]$E
         if($bankIndex.ContainsKey($key)){throw 'Ambiguous Xbox bank hash in the installation.'}
         $bankIndex[$key]=$entry
     }
-    $uniformPixels=@{}
+    $uniformPixels=@{};$uniformBanks=@{}
     foreach($mod in $active){
         $registered=@()
         foreach($u in $mod.manifest.uniforms){
             $proof=Invoke-ModContract 'validate-uniform' $Game (Get-ModPath $mod.root $u.folder) @([string]$u.template_hash,$u.name,$u.template_layout_sha256)
-            if($bankIndex.ContainsKey([string]$proof.hash)){throw 'Exclusive uniform bank registration collision.'}
+            $key=[string]$proof.hash
+            if($uniformBanks.ContainsKey($key) -or $bankIndex.ContainsKey($key) -ne [bool]$proof.replacing){
+                throw 'Exclusive uniform bank registration or replacement collision.'
+            }
+            if(-not $proof.replacing -and -not $mod.manifest.roster -and $proof.variant -lt 2){
+                throw 'New Home/Away banks require an explicit native roster.'
+            }
+            if($proof.replacing -and $null -ne $u.neck_shape){throw 'Stock uniform necklines belong to the roster.'}
+            $uniformBanks[$key]=$true
             foreach($pixel in $proof.texture_identities){if($uniformPixels.ContainsKey($pixel)){throw 'New uniform textures share an ambiguous owner identity.'};$uniformPixels[$pixel]=$true}
-            $bankIndex[[string]$proof.hash]=[pscustomobject]@{hash=$proof.hash;folder=('assets/'+$u.name);added=$true}
-            $registered+=[pscustomobject]@{mod=$mod.manifest.id;name=$u.name;hash=$proof.hash;artwork=$proof.artwork;variant=$proof.variant;selection=$proof.selection;neck_shape=$u.neck_shape;source=(Get-ModPath $mod.root $u.folder);files=$u.files;layout=$proof.layout}
+            $bankIndex[$key]=[pscustomobject]@{hash=$proof.hash;folder=('assets/'+$u.name);registered=$true}
+            $registered+=[pscustomobject]@{mod=$mod.manifest.id;name=$u.name;hash=$proof.hash;replacing=[bool]$proof.replacing;artwork=$proof.artwork;variant=$proof.variant;selection=$proof.selection;neck_shape=$u.neck_shape;source=(Get-ModPath $mod.root $u.folder);files=$u.files;layout=$proof.layout}
         }
         foreach($bank in $registered){
             $pair=@($registered|Where-Object{$_.artwork -eq $bank.artwork -and $_.variant -eq $bank.variant})
-            if($pair.Count -ne 2 -or @($pair|Where-Object{$_.selection}).Count -ne 1){throw 'New uniform artwork requires a world/selection pair in the same package.'}
+            if($pair.Count -ne 2 -or @($pair|Where-Object{$_.selection}).Count -ne 1 -or
+                @($pair|Where-Object{$_.replacing -ne $bank.replacing}).Count){
+                throw 'Uniform artwork requires a matching world/selection pair in the same package.'
+            }
         }
         $uniforms+=$registered
     }
@@ -484,7 +494,7 @@ function Resolve-Chmods([string]$Game, [string]$ModsRoot, $Selection, [string]$E
                     if(-not $bankIndex.ContainsKey([string]$hash)){throw 'Roster references an unregistered uniform bank. New jersey registration is not enabled.'}
                 }
             }
-            foreach($u in @($uniforms|Where-Object{$_.mod -ceq $m.id})){
+            foreach($u in @($uniforms|Where-Object{$_.mod -ceq $m.id -and -not $_.replacing})){
                 $routes=@($proof.uniform_routes|Where-Object{$_.world_hash -eq $u.hash -or $_.selection_hash -eq $u.hash})
                 if(-not $routes.Count -and $u.variant -ge 2){continue} # Auto-link by native Home/Away artwork identity at launch.
                 if(-not $routes.Count){throw 'Registered Home/Away bank is not referenced by this package native roster.'}
@@ -497,7 +507,7 @@ function Resolve-Chmods([string]$Game, [string]$ModsRoot, $Selection, [string]$E
             $key=[string]$a.bank_hash
             if(-not $bankIndex.ContainsKey($key)){throw 'Missing/ambiguous Xbox bank hash.'}
             $bank=@($bankIndex[$key])
-            if($bank[0].added){throw 'Author artwork inside the registered uniform folder; ordinary overrides target existing installation resources only.'}
+            if($bank[0].registered){throw 'A loose texture override conflicts with a whole uniform bank mod.'}
             if(-not $layoutCache.ContainsKey($key)){
                 $layout=Read-ModJson (Get-ModPath $Game ($bank[0].folder+'/asset.json'))
                 foreach ($block in $layout.blocks) {
@@ -704,7 +714,11 @@ function New-ChmodCache([string]$Game, [string]$CacheRoot, $Plan, [scriptblock]$
         if (-not ('ChmodStage' -as [type])) {
             Add-Type -Path (Join-Path $PSScriptRoot 'chmod_stage.cs')
         }
-        $bankFolders=@($Plan.replacements | ForEach-Object { ($_.target.Split('/')[0..1] -join '/') } | Sort-Object -Unique)
+        $bankFolders=@(
+            @($Plan.replacements | ForEach-Object { ($_.target.Split('/')[0..1] -join '/') }) +
+            @($Plan.uniforms | Where-Object {$_.replacing} | ForEach-Object {'assets/'+$_.name}) |
+            Sort-Object -Unique
+        )
         $overlay=$false
         if($Sparse -and $AssetTool){
             $request=Join-Path $stage 'overlay-request.json'
@@ -760,7 +774,9 @@ function New-ChmodCache([string]$Game, [string]$CacheRoot, $Plan, [scriptblock]$
                 if((Get-ModHash $source) -cne $f.sha256){throw 'Uniform package changed during preparation.'}
                 if($f.path -cne 'asset.json'){
                     $target=Get-ModPath $stage ('assets/'+$u.name+'/'+$f.path)
-                    $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target));[IO.File]::Copy($source,$target)
+                    $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))
+                    if([IO.File]::Exists($target)){[IO.File]::Delete($target)}
+                    [IO.File]::Copy($source,$target)
                 }
                 $applied++
                 if($totalFiles -le 50 -or $applied % 16 -eq 0 -or $applied -eq $totalFiles){
@@ -1020,7 +1036,7 @@ function Restore-ChmodRosterActivation([string]$Baseline,[string]$ProfileRoot,[s
 function Sync-ChmodRosterActivation([string]$Baseline,[string]$ProfileRoot,[string]$State,[string[]]$Roots,$Plan,[string]$VanillaGame) {
     $null=[IO.Directory]::CreateDirectory($State)
     Restore-ChmodRosterActivation $Baseline $ProfileRoot $State
-    $required=@($Plan.uniforms|Where-Object{-not $_.selection -and $_.variant -ge 2}|ForEach-Object{
+    $required=@($Plan.uniforms|Where-Object{-not $_.replacing -and -not $_.selection -and $_.variant -ge 2}|ForEach-Object{
         $route=[ordered]@{artwork=$_.artwork;variant=$_.variant;required=$true}
         if($null -ne $_.neck_shape){$route.neck_shape=$_.neck_shape}
         $route

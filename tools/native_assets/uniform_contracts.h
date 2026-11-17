@@ -18,8 +18,9 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
           "Uniform registration requires direct Xbox assets");
   J entry; std::set<std::string> occupied_pixels;
   const auto target_hash=crc(name);
+  const bool replacing=target_hash==template_hash;
   for(const auto& e:catalog.at("entries")) {
-    require(num(e["hash"])!=target_hash,"Uniform bank identity already exists");
+    require(replacing || num(e["hash"])!=target_hash,"Uniform bank identity already exists");
     if(num(e["hash"])==template_hash){require(entry.is_null(),"Ambiguous uniform template hash");entry=e;}
     const auto layout=json(contained(root,e["folder"].get<std::string>()+"/asset.json"));
     for(const auto& t:layout.value("textures",J::array())) {
@@ -33,8 +34,10 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
   std::smatch source_match;auto source_name=utf8(source.filename());
   require(std::regex_match(source_name,source_match,std::regex("(sel)?u([haxyz])([0-9]{3,4})\\.iff")) &&
           source_match[1].matched==match[1].matched,"Uniform template must be an original matching world/selection bank");
+  require(!replacing || source_name==name,"Uniform replacement must use its own stock bank");
   auto layout=json(source_meta), supplied=json(bank/L"asset.json");
   bool legacy_layout = file_sha(source_meta) != template_layout_sha256;
+  require(!replacing || !legacy_layout,"Uniform replacement requires the current stock layout");
   require(!legacy_layout ||
               layout.value("legacy_layout_sha256", std::string()) == template_layout_sha256,
           "Uniform template metadata revision differs");
@@ -177,8 +180,9 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
     require(attributes!=INVALID_FILE_ATTRIBUTES && !(attributes&FILE_ATTRIBUTE_REPARSE_POINT),"Linked uniform package path");
     if(e.is_regular_file())require(allowed.contains(utf8(e.path().lexically_relative(bank))),"Undeclared uniform bank file");
   }
-  layout["identity"]=identity;layout["textures"]=textures;
-  return J{{"ready",true},{"name",name},{"hash",target_hash},{"artwork",artwork},
+  if(!replacing)layout["identity"]=identity;
+  layout["textures"]=textures;
+  return J{{"ready",true},{"replacing",replacing},{"name",name},{"hash",target_hash},{"artwork",artwork},
            {"selection",match[1].matched},{"variant",std::string("haxyz").find(match[2].str())},
            {"layout",layout},{"texture_identities",ids}};
 }
