@@ -97,3 +97,17 @@
 # other slot near it is missing. Twin of 84CA8998 beside sub_84CA8AC0.
 # See docs/findings/2026-11-04-settings-menu-getter.md.
 0x84CA8B60 = { size = 16 }
+
+# [CONFIRMED] Quick Game: after the final buzzer and the post-game profile
+# autosave, the game fatals on unregistered 84C945E8. Its only reference is the
+# event-1 list {1, 84C945E8, 0} at .rdata 8215A7F4, in the event map 8215A83C of
+# SlideOnNav_PauseMenu_EndOfGameBase. Original body: lis/addi 85D09D24, stores
+# zero to +0 and +4, then b 84C7B900; mflr at 84C94600 starts the next entry.
+# See docs/findings/2026-11-10-end-of-game-menu-callback.md.
+0x84C945E8 = { size = 24 }
+
+# [CONFIRMED] Same kind of reference: the event-6 list {3, 84C6E378, 0} at
+# .rdata 82147490 (event map 821474A8 of LegacyMainMenu) points to a lone blr. The previous word is the unconditional
+# b ending the prior function; zero padding follows. Structurally verified
+# sibling, not runtime-observed.
+0x84C6E378 = { size = 4 }

@@ -1,5 +1,7 @@
 # Findings index
 
+- [2026-11-17 End-of-half switch table](2026-11-17-end-of-half-switch.md): a Quick Game closed silently at the end of the first half on the one-case `bctr` switch at `84C67838`; its 12-entry table is read from the XEX and listed, and a played game now reaches the buzzer and the menus.
+- [2026-11-10 End-of-game screen callback](2026-11-10-end-of-game-menu-callback.md): the Quick Play buzzer crash target is `84C945E8`, an event-1 callback of `SlideOnNav_PauseMenu_EndOfGameBase`; it and one structurally verified sibling (`LegacyMainMenu`) are registered.
 - [2026-11-11 Modloader integration](2026-11-11-ravensfan-modloader-integration.md) records the option-item adapter changes and Legacy SDK candidates.
 - [2026-11-10 Menu screen system](2026-11-10-menu-screen-system.md) covers navigation, layouts, bindings, options and page transitions.
 - [2026-11-10 Legacy mode internals](2026-11-10-legacy-mode-internals.md) covers coach slots, recruiting, prestige, development and conference swaps.
