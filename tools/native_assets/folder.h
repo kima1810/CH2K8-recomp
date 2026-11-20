@@ -1,5 +1,6 @@
 #pragma once
 #include "import_layout.h"
+#include "court_contract.h"
 inline J augment(const fs::path &root, J m) {
   auto marker = root / L"asset_edits.json";
   J reg = fs::exists(marker) ? json(marker)
@@ -85,6 +86,7 @@ inline J augment(const fs::path &root, J m) {
 struct Folder {
   fs::path root;
   J manifest, compat;
+  std::map<fs::path, fs::path> component_overrides;
   std::map<uint32_t, J> layouts, entries;
   explicit Folder(fs::path r)
       : root(longpath(fs::canonical(longpath(r)))),
@@ -238,15 +240,34 @@ struct Folder {
     if (ref.contains("texture")) {
       require(kind == 0xe26c9b5d && data.size() == 2,
               "Not a split Xbox scene texture");
-      auto slot = num(ref["texture"]), count = uint64_t(be(data[0], 0x20)),
-           table = 0x24ull + be(data[0], 0x24) - 1;
-      require(slot < count && table <= data[0].size() &&
-                  count * 224 <= data[0].size() - table,
-              "Scene texture exceeds descriptor table");
+      auto slot = num(ref["texture"]), count = uint64_t(be(data[0], 0x20));
+      require(slot < count, "Missing scene texture slot");
+      auto table = scene_texture_table(data[0], count);
       data[0] = sub(data[0], table + slot * 224, 224);
       kind = 0x5c369069;
     }
     return {kind, std::move(data)};
+  }
+  std::vector<fs::path> scene_components(const J &e, const J &r) {
+    std::vector<fs::path> files;
+    if (r.contains("component_files")) {
+      for (auto &c : r["component_files"])
+        if (!c["path"].is_null())
+          files.push_back(contained(root, c["folder"].get<std::string>() +
+                                              "/" + c["path"].get<std::string>()));
+    } else {
+      const auto &l = layout(e);
+      for (size_t j = 0; j < r["offsets"].size(); ++j)
+        for (auto &c : l["blocks"][j]["components"])
+          if (num(c["start"]) == num(r["offsets"][j]))
+            files.push_back(contained(root, e["folder"].get<std::string>() +
+                                                "/" + c["path"].get<std::string>()));
+    }
+    return files;
+  }
+  fs::path runtime_component(const fs::path &original) const {
+    auto it = component_overrides.find(original);
+    return it == component_overrides.end() ? original : it->second;
   }
   J zero(uint64_t n) {
     std::string relative = "_runtime/padding/" + std::to_string(n) + ".pad";
@@ -268,7 +289,9 @@ struct Folder {
       J segments = J::array();
       uint64_t cursor = 0;
       for (auto &s : l["loose_segments"]) {
-        auto file = contained(folder, s["path"]);
+        auto file = runtime_component(s.contains("resource_file")
+            ? contained(root, s["resource_file"])
+            : contained(folder, s["path"]));
         auto n = fs::file_size(file);
         require(num(s["offset"]) == cursor && num(s["size"]) == n,
                 "Loose paired component extent changed");
@@ -329,15 +352,48 @@ struct Folder {
         });
         for (auto &c : cs) {
           require(num(c["start"]) == logical, "Loose component gap or overlap");
-          auto f = contained(folder, c["path"]);
+          auto f = runtime_component(contained(folder, c["path"]));
           auto n = fs::file_size(f), old = num(c["end"]) - num(c["start"]);
           if (n != old) {
             bool roster = l["records"].size() == 1 &&
                           num(l["records"][0]["type"]) == 0xc61649b2 &&
                           cs.size() == 1 && num(c["start"]) == 0 &&
                           num(c["end"]) == num(b["logical"]);
-            require(roster && n >= old && n % 2 == 0 && n <= 64ull << 20,
-                    "Unsupported loose resource resizing");
+            const bool expanded_floor = num(b["index"]) == 1 &&
+                c["path"] == "floor.scne/scene_gpu.dat" && old % 4096 == 0 &&
+                n == old + GeorgiaArtworkSize &&
+                std::regex_match(e["folder"].get<std::string>(),std::regex("assets/s[0-9]{3}\\.iff"));
+            if (expanded_floor) {
+              auto gpu = read(f, 64ull << 20);
+              require(sha(std::span(gpu).first(old)) == c["sha256"].get<std::string>(),
+                      "Expanded floor changed the original GPU region");
+              // Rebase every record following the expanded floor in block 1.
+              const auto table = 27u + be(header, 28);
+              unsigned owners = 0;
+              for (const auto &record : l["records"]) {
+                if (record["offsets"].size() < 2)
+                  continue;
+                const auto previous = num(record["offsets"][1]);
+                if (previous == num(c["start"])) {
+                  require(num(record["id"]) == 0xbe45d62e && num(record["type"]) == 0xe26c9b5d,
+                          "Expanded floor GPU region has an unexpected owner");
+                  ++owners;
+                }
+                if (previous < num(c["end"]) || previous == UINT32_MAX)
+                  continue;
+                const auto field = table + 4 * num(record["index"]);
+                const auto row = field + be(header, field) - 1;
+                require(be(header, row) == num(record["id"]) &&
+                        be(header, row + 16) == previous &&
+                        previous <= UINT32_MAX - GeorgiaArtworkSize, "Unexpected floor bank offset");
+                bounds(header, row + 16, 4);
+                put(header, row + 16, previous + GeorgiaArtworkSize);
+              }
+              require(owners == 1, "Expanded floor GPU region must have a single owner");
+            } else {
+              require(roster && n >= old && n % 2 == 0 && n <= 64ull << 20,
+                      "Unsupported loose resource resizing");
+            }
           }
           if (n)
             seg.push_back(J{{"offset", cursor},
@@ -378,13 +434,14 @@ struct Folder {
     seg[0]["path"] = final;
     return J{{"size", cursor}, {"segments", seg}};
   }
-  J plan(Job &job) {
+  J plan(Job &job, const std::map<uint32_t, J> &stock = {}) {
     std::vector<std::pair<J, J>> views;
     uint64_t done = 0;
     for (auto &e : manifest["entries"]) {
       job.update(done++, manifest["entries"].size(),
                  "Validating native loose resource maps...");
-      views.push_back({e, bank(e)});
+      auto saved = stock.find(uint32_t(num(e["hash"])));
+      views.push_back({e, saved == stock.end() ? bank(e) : saved->second});
     }
     uint64_t partsize = num(compat["part_size"]);
     require(partsize && partsize % 2048 == 0,

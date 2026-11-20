@@ -126,6 +126,14 @@ address = 0x84C23904
 register = 10
 labels = [0x84C23918, 0x84C23964, 0x84C239B0, 0x84C23A4C]
 
+# sub_84C67120: 1 -> 12 cases. Table 84C6783C read from the retail XEX (12 words; the 13th is the
+# rlwinm at 84C6786C). Missing case 1+ trapped (0xC000001D) at the end of a Quick Game half.
+[[switch_tables]]
+address = 0x84C67838
+register = 3
+labels = [0x84C6789C, 0x84C6789C, 0x84C6789C, 0x84C6789C, 0x84C6788C, 0x84C6788C, 0x84C6788C, 0x84C6788C,
+          0x84C6788C, 0x84C6788C, 0x84C6788C, 0x84C6788C]
+
 # sub_84C67D10: 1 -> 12 cases.
 [[switch_tables]]
 address = 0x84C67D74

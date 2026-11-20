@@ -16,11 +16,37 @@ from prepare_display_sdk import prepare_display
 PIN = 'bd833a2ab69d305f99ddf57418fc38ffec8af93d'
 
 
+def prepare_dispatch_diagnostics(source):
+    path = source / 'src/system/function_dispatcher.cpp'
+    original = (
+        '  REX_FATAL("Call to invalid or unregistered function at guest address 0x{:08X}",\n'
+        '            ctx.last_indirect_target);'
+    )
+    detailed = (
+        '  REX_FATAL("Call to invalid or unregistered function at guest address 0x{:08X} "\n'
+        '            "(guest LR=0x{:08X}, CTR=0x{:08X}, SP=0x{:08X})",\n'
+        '            ctx.last_indirect_target, uint32_t(ctx.lr), ctx.ctr.u32, ctx.r1.u32);'
+    )
+    text = path.read_text(encoding='utf-8')
+    if detailed in text and original not in text:
+        return
+    if text.count(original) != 1:
+        raise ValueError('Unrecognized invalid guest function trap; refusing to patch')
+    path.write_text(text.replace(original, detailed), encoding='utf-8', newline='\n')
+
+
 def prepare(source):
     revision = subprocess.check_output(
         ['git', '-C', str(source), 'rev-parse', 'HEAD'], text=True).strip()
     if revision != PIN:
         raise ValueError(f'Expected pinned SDK {PIN}, got {revision}')
+    cmake=source/'CMakeLists.txt'
+    text=cmake.read_text(encoding='utf-8')
+    if '# CH2K8 configurable SDK outputs' not in text:
+        old='\n'.join(f'set(CMAKE_{kind}_OUTPUT_DIRECTORY "${{REXGLUE_ROOT}}/out/${{REX_PLATFORM}}")' for kind in ('RUNTIME','LIBRARY','ARCHIVE'))
+        if text.count(old)!=1:raise ValueError('Unrecognized pinned SDK output-directory site')
+        new='# CH2K8 configurable SDK outputs\nset(REXGLUE_OUTPUT_DIRECTORY "${REXGLUE_ROOT}/out/${REX_PLATFORM}" CACHE PATH "SDK artifact directory")\n'+'\n'.join(f'set(CMAKE_{kind}_OUTPUT_DIRECTORY "${{REXGLUE_OUTPUT_DIRECTORY}}")' for kind in ('RUNTIME','LIBRARY','ARCHIVE'))
+        cmake.write_text(text.replace(old,new),encoding='utf-8',newline='\n')
     prepare_native_gpu(source)
     prepare_native_shaders(source)
     prepare_native_vertex(source)
@@ -31,6 +57,7 @@ def prepare(source):
     prepare_content(source)
     prepare_portable(source)
     prepare_display(source)
+    prepare_dispatch_diagnostics(source)
     # Windows Git may check out symlinks as small text files. Materialize only
     # libmspack's tracked file links, using the target recorded in Git and
     # requiring both ends to remain inside that dependency.

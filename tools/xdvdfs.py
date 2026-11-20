@@ -32,6 +32,8 @@ import struct
 import sys
 from pathlib import Path
 
+from ch2k8_archive import validate_filename
+
 SECTOR = 0x800
 MAGIC = b"MICROSOFT*XBOX*MEDIA"
 BASES = (0, 0xFD90000, 0x2080000, 0x18300000)
@@ -75,7 +77,7 @@ def walk(f, base: int, sector: int, size: int, prefix: str = "", _directories=No
             continue  # sector fill
         if not nlen or off+DIRENT.size+nlen>len(data):raise ValueError('Truncated Xbox ISO filename')
         name = data[off + DIRENT.size:off + DIRENT.size + nlen].decode("ascii")
-        if name in ('.','..') or any(c in name for c in '/\\:\0'):raise ValueError('Invalid Xbox ISO filename')
+        validate_filename(name)
         member_offset=base+start*SECTOR
         if member_offset>image_size or length>image_size-member_offset:raise ValueError('Xbox ISO member exceeds image extent')
         out.append((name, start, length, attr))
@@ -114,12 +116,14 @@ def cmd_list(args) -> None:
 
 def cmd_extract(args) -> None:
     f, base, root, root_size = open_image(args.image)
-    out = Path(args.output)
+    out = Path(args.output).resolve()
     want = {p.lower() for p in args.path or []}
     for path, start, size, attr in walk(f, base, root, root_size):
         if want and path.lower() not in want:
             continue
         dest = out / path
+        if dest.resolve() != dest:
+            raise ValueError(f"Linked Xbox ISO output path: {path}")
         if attr & ATTR_DIR:
             dest.mkdir(parents=True, exist_ok=True)
             continue

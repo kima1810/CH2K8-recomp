@@ -1,0 +1,22 @@
+{
+  "source": "https://github.com/ZMO34/CHoops-Extractor-Reborn-Recomp/tree/feat/chmod-extension-sdk/sdk",
+  "files": {
+    "ACCEPTANCE.md": "f5591f62eca19b9dc80366ffd2a95476240d65caf84164b6635590f9521b2c29",
+    "ADDING_HOOKS.md": "f7e3d3639a49c74355719cd3de25b4d2db36a027d047dbe736e1f423fef776a1",
+    "AUTHORING.md": "2d4446fd911e2584a4407cd0b423d97f52cb16a880838d45b4bd390f2f678af2",
+    "BUTTON_STYLE.md": "b2912cbe89615398cef1af772050a1975f567d47d43fff04108dd5318629d0b5",
+    "CMakeLists.txt": "cebbfb7d9567fa327ceb6fbc869514983a2f19dbd7671e1643edff7ec2b15cba",
+    "CONTRACTS.md": "352915c6824a4d3b439e888d8fa071841a513e4f7b87366fddf2850b9bf1a2b8",
+    "examples/button-style/extension.cpp": "744a597f8dc80c81b125e544c2ef9242aa7094f5534052560205a60298be3133",
+    "examples/minimal/extension.cpp": "436e0987c5f0db11641daff5e90c54462a1efd09457c26b57a2d415258273af7",
+    "examples/minimal/observe.json": "b8329909ddad67806e929ece533be5c1e2720ba1d2cbbe92201a0c52b6b77fe0",
+    "examples/minimal/replace.json": "d7684b29853b578020abc27d225f1021da66255dc3935d20d2a845079ffdcb71",
+    "examples/minimal/transform.json": "9bc284dcab8db4dcbc28c7b68cd76ec0b464f9f096e3b9c8993ffe142823a58e",
+    "hooks.json": "c52bf497ce489cd0da707f889d294757d6b15392dc8192f2db4c5ee7b877e1f0",
+    "include/chmod/abi.h": "150b0058382ef52c5435bbdab87d5689dac789021b8641fa8c380d480a258fbc",
+    "include/chmod/mod.hpp": "bfd2ac4a321e0c44dd35a0703da9a1c9721c7f33636e3ce4d01439fb5105d881",
+    "package.py": "c31c540ea47b30b9132a42e7cfd7e6e343609c9ca21ac113089591fa8720bc47",
+    "package_button_style.py": "76e100e51cfad73d59fa17118e8c20eee9e30f90a92d75a70bed7ec0f3e3aded",
+    "README.md": "b4a081638beb97cbb27b90630ffd7b105a3f44e165f1c34711a6d196a8b21806"
+  }
+}

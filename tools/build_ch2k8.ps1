@@ -76,19 +76,22 @@ try {
         Invoke-BuildCommand 'game-build' $cmake @('--build',$BuildDirectory,'--target','ch2k8','ch2k8_tools','--parallel',"$Jobs") 'Check the final compiler/linker error below. For memory exhaustion rerun with -Jobs 1. Use a new -BuildDirectory for a stale CMake cache; completed code generation is reused.'
     }finally{Pop-Location}
     $gameData=if($kind -eq 'folder'){$Source}elseif($kind -eq 'xex'){Split-Path -Parent $Source}else{$null}
-    if($kind -eq 'iso' -and -not $CodeOnly){
-        $gameData=if($InstallDirectory){$InstallDirectory}else{Join-Path $repo ('work/installed/'+[IO.Path]::GetFileNameWithoutExtension($Source)+'-assets')}
+    $archiveSource=if($kind -eq 'iso'){$Source}elseif($gameData -and (Test-Path -LiteralPath (Join-Path $gameData '0A') -PathType Leaf)){$gameData}
+    if($archiveSource -and -not $CodeOnly){
+        $gameData=if($InstallDirectory){$InstallDirectory}else{Join-Path $repo ('work/installed/'+[IO.Path]::GetFileNameWithoutExtension($archiveSource)+'-assets')}
         if(Test-Path -LiteralPath $gameData){
-            if(-not (Test-Path -LiteralPath (Join-Path $gameData 'assets.json')) -or -not (Test-Path -LiteralPath (Join-Path $gameData 'default.xex')) -or (Get-FileHash -LiteralPath (Join-Path $gameData 'default.xex')).Hash.ToLowerInvariant() -ne $expected){throw 'Existing ISO installation is incomplete or incompatible. It was left untouched. Pass -InstallDirectory with a new folder to retry.'}
+            if(-not (Test-Path -LiteralPath (Join-Path $gameData 'assets.json')) -or -not (Test-Path -LiteralPath (Join-Path $gameData 'default.xex')) -or (Get-FileHash -LiteralPath (Join-Path $gameData 'default.xex')).Hash.ToLowerInvariant() -ne $expected){throw 'Existing loose installation is incomplete or incompatible. It was left untouched. Pass -InstallDirectory with a new folder to retry.'}
             Invoke-BuildCommand 'asset-prepare' $native @('prepare',$gameData)
         }else{
-            Invoke-BuildCommand 'iso-assets' $native @('import',$Source,$gameData,'--progress-file',(Join-Path (Split-Path -Parent $LogFile) 'asset-progress.json')) 'The game executable is already built. Check the importer error/free disk space. Retry with -InstallDirectory on a drive with room for decoded assets; use -CodeOnly if you only need the executable.'
+            $null=New-Item -ItemType Directory -Path (Split-Path -Parent $gameData) -Force
+            Invoke-BuildCommand 'disc-assets' $native @('import',$archiveSource,$gameData,'--progress-file',(Join-Path (Split-Path -Parent $LogFile) 'asset-progress.json')) 'The game executable is already built. Check the importer error/free disk space. Retry with -InstallDirectory on a drive with room for decoded assets; use -CodeOnly if you only need the executable.'
         }
         Invoke-BuildCommand 'runtime-map' $native @('validate-runtime',$gameData)
     }
     $ready=[bool]($gameData -and ((Test-Path -LiteralPath (Join-Path $gameData '0A')) -or (Test-Path -LiteralPath (Join-Path $gameData 'assets.map'))))
     $result=@{executable=(Join-Path $BuildDirectory 'ch2k8.exe');game_data=$gameData;data_ready=$ready;source_kind=$kind;python=$python;log=$LogFile;status=$global:Ch2k8BuildContext.status}
     if(-not (Test-Path -LiteralPath $result.executable)){throw 'Build completed without the expected ch2k8.exe. Inspect CMake output and the selected build directory.'}
+    & (Join-Path $PSScriptRoot 'write_mod_runtime_receipt.ps1') -BuildDirectory $BuildDirectory
     $state=Join-Path $repo 'port/userdata';$null=New-Item -ItemType Directory -Path $state -Force
     $result|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $state 'build-result.json') -Encoding UTF8
     if($gameData){@{game_data=$gameData;renderer='d3d12';executable=$result.executable}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $state 'launcher.json') -Encoding UTF8}

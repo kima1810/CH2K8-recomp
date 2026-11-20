@@ -14,6 +14,7 @@ param(
     [ValidateSet('default', 'baseline', 'optimized')][string]$NativeConstants = 'default',
     [ValidateSet('default', 'baseline', 'optimized')][string]$NativePackets = 'default',
     [switch]$GpuStats,
+    [ValidateSet('default','off','on')][string]$SharedUploadReuse = 'default',
     [switch]$PresentStats,
     [switch]$Visible,
     [ValidateRange(0, 0x7FFFFFFFFFFFFFFF)][long]$CpuAffinityMask = 0,
@@ -67,6 +68,10 @@ if ($Profile.EndsWith('-extent')) { $arguments += '--execute_unclipped_draw_vs_o
 if ($NativeConstants -eq 'baseline') { $arguments += '--no-ch2k8_native_constants' }
 elseif ($NativeConstants -eq 'optimized') { $arguments += '--ch2k8_native_constants' }
 if ($GpuStats) { $arguments += '--ch2k8_gpu_stats' }
+if ($SharedUploadReuse -ne 'default') {
+    if ($backend -ne 'd3d12') { throw 'SharedUploadReuse requires D3D12.' }
+    $arguments += if ($SharedUploadReuse -eq 'on') { '--ch2k8_reuse_shared_uploads' } else { '--no-ch2k8_reuse_shared_uploads' }
+}
 if ($PresentStats) { $arguments += '--ch2k8_present_stats' }
 if ($PresentPacing -ne 'default') {
     $arguments += if ($PresentPacing -eq 'baseline') {'--no-ch2k8_native_present_pacing'} else {'--ch2k8_native_present_pacing'}
@@ -139,7 +144,7 @@ try {
     }
     $writer = [System.IO.StreamWriter]::new((Join-Path $runRoot 'process.csv'), $false)
     $writer.AutoFlush = $true
-    $writer.WriteLine('elapsed_s,cpu_time_s,working_set_bytes,threads,cpu_affinity_mask')
+    $writer.WriteLine('elapsed_s,cpu_time_s,working_set_bytes,threads,cpu_affinity_mask,private_bytes')
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     while (-not $game.HasExited -and $timer.Elapsed.TotalSeconds -lt $DurationSeconds) {
         $game.Refresh()
@@ -151,8 +156,10 @@ try {
         }
         $effectiveAffinity = '0x{0:x}' -f $game.ProcessorAffinity.ToInt64()
         $observedAffinity[$effectiveAffinity] = $true
-        $writer.WriteLine(('{0:F3},{1:F3},{2},{3},{4}' -f $timer.Elapsed.TotalSeconds,
-            $game.TotalProcessorTime.TotalSeconds, $game.WorkingSet64, $game.Threads.Count, $effectiveAffinity))
+        $writer.WriteLine([string]::Format([cultureinfo]::InvariantCulture,
+            '{0:F3},{1:F3},{2},{3},{4},{5}', $timer.Elapsed.TotalSeconds,
+            $game.TotalProcessorTime.TotalSeconds, $game.WorkingSet64, $game.Threads.Count,
+            $effectiveAffinity, $game.PrivateMemorySize64))
         Start-Sleep -Milliseconds 500
     }
     if (-not $game.HasExited) { $stoppedAtLimit = $true; $game.Kill() }

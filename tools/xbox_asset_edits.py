@@ -28,7 +28,7 @@ def decode_component(data,limit=128*1024*1024):
                     if pos+2>len(data):raise ValueError('Truncated Xbox H7A match')
                     token=int.from_bytes(data[pos:pos+2],'big');pos+=2;distance=token&((1<<shift)-1);length=min((token>>shift)+3,expected-len(out))
                     if not 1<=distance<=len(out):raise ValueError('Invalid Xbox H7A distance')
-                    chunk=out[-distance:][:min(distance,length)];out.extend((chunk*((length+len(chunk)-1)//len(chunk)))[:length])
+                    start=len(out)-distance;chunk=out[start:start+min(distance,length)];out.extend((chunk*((length+len(chunk)-1)//len(chunk)))[:length])
                 else:
                     if pos>=len(data):raise ValueError('Truncated Xbox H7A literal')
                     out.append(data[pos]);pos+=1
@@ -37,7 +37,7 @@ def decode_component(data,limit=128*1024*1024):
         if len(data)<16:raise ValueError('Short Xbox ZLIB component')
         expected,stored=struct.unpack_from('>II',data,4)
         if expected>limit or stored!=len(data):raise ValueError('Invalid Xbox ZLIB component header')
-        decoder=zlib.decompressobj();out=decoder.decompress(data[16:],limit+1)
+        decoder=zlib.decompressobj();out=decoder.decompress(data[16:],expected+1)
         if len(out)!=expected or not decoder.eof or decoder.unconsumed_tail:raise ValueError('Invalid Xbox ZLIB payload')
         return out
     return data

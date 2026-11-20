@@ -55,7 +55,7 @@ def decode(data, logical):
         if len(data) < 20:
             raise ValueError('short H7A header')
         expected, stored, _, shift = struct.unpack_from('>4I', data, 4)
-        if expected != logical or stored != len(data) or not 1 <= shift <= 16:
+        if not 0 <= logical <= 128 << 20 or expected != logical or stored != len(data) or not 1 <= shift <= 16:
             raise ValueError('invalid H7A header')
         if _codec:
             result=ctypes.create_string_buffer(logical)
@@ -81,7 +81,8 @@ def decode(data, logical):
                     length = min((token >> shift)+3, logical-len(out))
                     if not 1 <= distance <= len(out):
                         raise ValueError('invalid H7A distance')
-                    chunk = out[-distance:][:min(distance, length)]
+                    start = len(out) - distance
+                    chunk = out[start:start + min(distance, length)]
                     out.extend((chunk*((length+len(chunk)-1)//len(chunk)))[:length])
                 else:
                     if pos >= len(data):
@@ -91,7 +92,15 @@ def decode(data, logical):
         return bytes(out)
     if data[:4] == b'ZLIB':
         import zlib
-        result = zlib.decompress(data[16:])
+        if len(data) < 16 or not 0 <= logical <= 128 << 20:
+            raise ValueError('invalid ZLIB component size')
+        expected, stored = struct.unpack_from('>II', data, 4)
+        if expected != logical or stored != len(data):
+            raise ValueError('invalid ZLIB component header')
+        decoder = zlib.decompressobj()
+        result = decoder.decompress(data[16:], logical + 1)
+        if not decoder.eof or decoder.unconsumed_tail:
+            raise ValueError('invalid ZLIB component payload')
     else:
         result = data
     if len(result) != logical:

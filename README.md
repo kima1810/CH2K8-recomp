@@ -17,3 +17,41 @@ Use `-PythonExecutable "C:/path/to/python.exe"` when needed, and `-ValidateOnly`
 This is a beta targeting Windows 10/11 x64, Intel/AMD SSE4.1 CPUs and compatible graphics drivers. Full-game completion, Legacy, edited assets and additional hardware still need tester coverage. Use **Export bug report** after a failure and include reproduction steps.
 
 For the complete ISO-to-executable workflow, prerequisites, stage-by-stage recovery and compatibility limits, see [BUILDING.md](BUILDING.md). Builds automatically load the Microsoft x64 compiler environment and always save a structured failure report.
+
+## Crash reports on Windows
+
+The launcher writes a timestamped runtime log to the `logs` directory next to
+the game executable. On an unhandled Windows exception or CRT abort, the game
+attempts to write a same-named `.dmp` with native thread and module information.
+Open it in WinDbg with symbols from the matching build. Use **Export bug report**
+for runtime logs, build information, and renderer settings. Add steps to
+reproduce and attach the dump separately after reviewing it for process memory
+you may wish to keep private.
+
+With the patched source SDK, an invalid indirect guest call also logs the guest
+target, link register (caller return address), count register, and stack pointer.
+Look up the guest target and return address in the matching Xbox executable in
+Ghidra. A forced process kill or a fault before reporter initialization can leave
+only a partial runtime log.
+
+The reusable [C++ extension SDK](sdk/README.md) is hosted with
+[Modding Studio](https://github.com/ZMO34/CHoops-Extractor-Reborn-Recomp/tree/feat/chmod-extension-sdk/sdk),
+with [draft integration PR #3](https://github.com/ZMO34/CHoops-Extractor-Reborn-Recomp/pull/3).
+See [CHMOD API1.3](docs/formats/chmod-1.3.md) for ABI2 native extensions and
+[the implementation report](docs/findings/2026-11-08-extension-framework.md).
+Current framework/adapters/examples are compiled; runtime tests and gameplay
+verification remain pending. Native code requires explicit launcher opt-in.
+
+The launcher now includes **Update from GitHub** and **Rollback update**.
+See [runtime update documentation](docs/RUNTIME_UPDATES.md) for safe installation,
+release requirements and verification limits. The currently published older beta
+cannot downgrade the local SDK runtime. Tests/game execution remain user-run.
+
+## Modding and research
+
+Start with the [folder modding guide](docs/MODDING.md) and
+[editor export contract](docs/formats/mod-folder-editor.md).
+The [recent ZMO research index](docs/research/zmo-beta-research.md) links the
+modloader, native-hook and performance findings, with
+asset, court, uniform, native-hook, scorebug and portability findings, with
+remaining verification work recorded for each feature.

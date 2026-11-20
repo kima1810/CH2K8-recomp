@@ -18,6 +18,13 @@ def test_prepare_sdk_materializes_windows_links_and_forwards_refresh(tmp_path, m
     window = tmp_path/'src/ui/window_sdl.cpp'
     window.parent.mkdir(parents=True)
     window.write_text('SDL_GetClosestFullscreenDisplayMode(display, width, height, 0.0f, true, &mode)')
+    dispatcher = tmp_path/'src/system/function_dispatcher.cpp'
+    dispatcher.parent.mkdir(parents=True)
+    dispatcher.write_text(
+        '  REX_FATAL("Call to invalid or unregistered function at guest address 0x{:08X}",\n'
+        '            ctx.last_indirect_target);',
+        encoding='utf-8',
+    )
 
     def git_output(args, **kwargs):
         if 'rev-parse' in args:
@@ -41,11 +48,14 @@ def test_prepare_sdk_materializes_windows_links_and_forwards_refresh(tmp_path, m
     monkeypatch.setattr(sdk, 'prepare_portable', lambda source: None)
     monkeypatch.setattr(sdk, 'prepare_display', lambda source: None)
     sdk.prepare(tmp_path)
+    detailed = dispatcher.read_text(encoding='utf-8')
+    assert 'guest LR=0x{:08X}, CTR=0x{:08X}, SP=0x{:08X}' in detailed
     assert link.read_bytes() == target.read_bytes()
     assert 'float(REXCVAR_GET(video_mode_refresh_rate))' in window.read_text()
     expected = window.read_bytes()
     sdk.prepare(tmp_path)
     assert window.read_bytes() == expected
+    assert dispatcher.read_text(encoding='utf-8') == detailed
     assert target.read_text() == 'int original_dependency_code;\n'
 
 

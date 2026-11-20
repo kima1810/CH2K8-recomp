@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools'))
 from geometry_batch_codegen import batch_normalization
 from geometry_input_codegen import adapt_input_stream
-from optimize_codegen import optimize_source, restore_source
+from optimize_codegen import optimize_source, restore_source, vectorize_small_unpack
 
 
 def dot(dst,src):
@@ -71,3 +71,64 @@ def test_local_input_loop_rejects_changed_stride_trip_count_and_control():
     changed=original[:start]+body.replace('ctx.r10.s64 + 48','ctx.r10.s64 + 52',1)+original[start+len(body):]
     with pytest.raises(ValueError,match='re-audit required'):
         optimize_source(changed)
+
+
+def test_color_unpack_requires_the_audited_byte_order():
+    body = ('\t// vupkd3d128 v0,v0,0\n' + ''.join(
+        f'\tvTemp.u32[{lane}] = ctx.v0.u8[{byte}] | 0x3F800000;\n'
+        for lane, byte in enumerate((3, 0, 1, 2))) + '\tctx.v0 = vTemp;\n')
+    assert 'Ch2k8UnpackColor(ctx.v0, ctx.v0, vTemp);' in vectorize_small_unpack(body)
+    with pytest.raises(ValueError, match='Unexpected geometry unpack emission'):
+        vectorize_small_unpack(body.replace('u8[3]', 'u8[0]'))
+
+
+def test_small_unpack_preserves_lane_order_sentinels_aliases_and_scratch(tmp_path):
+    compiler = shutil.which('clang++')
+    sdk = ROOT/'port/sdk-vulkan/include'
+    if not compiler or not sdk.exists():
+        pytest.skip('Requires native SDK and Clang')
+    source = tmp_path/'unpack.cpp'
+    source.write_text(r'''
+#include "packed_vector_optimized.h"
+#include <cassert>
+#include <cstring>
+
+int main() {
+  // Sweep every 10-bit value in all components, crossing all four alpha values.
+  for (uint32_t i = 0; i < 4096; ++i) {
+    const uint32_t x = i & 1023, y = (x + 317) & 1023, z = (x + 703) & 1023;
+    const uint32_t word = ((i >> 10) << 30) | (z << 20) | (y << 10) | x;
+    const auto signed10 = [](uint32_t value) { return int32_t(value ^ 512) - 512; };
+    for (bool alias : {false, true}) {
+      PPCVRegister input{}, dest{}, scratch{}, expectedScratch{};
+      PPCRegister temp{};
+      input.u32[0] = dest.u32[0] = word;
+      std::memset(&scratch, 0xA5, sizeof(scratch));
+      expectedScratch = scratch;
+      temp.u64 = 0xABCD123400000000ull;
+      Ch2k8UnpackBiased32(dest, alias ? dest : input, temp, scratch);
+      assert(dest.u32[0] == (0x3F800000u | (word >> 30)));
+      assert(dest.u32[1] == uint32_t(0x40400000 + signed10(z)));
+      assert(dest.u32[2] == uint32_t(0x40400000 + signed10(y)));
+      assert(dest.u32[3] == (x == 512 ? 0x7FC00000u : uint32_t(0x40400000 + signed10(x))));
+      assert(temp.u64 == (0xABCD123400000000ull | uint32_t(signed10(z))));
+      expectedScratch.u32[0] = dest.u32[0];
+      assert(std::memcmp(&scratch, &expectedScratch, sizeof(scratch)) == 0);
+
+      dest.u32[0] = word;
+      Ch2k8UnpackColor(dest, alias ? dest : input, scratch);
+      assert(dest.u32[0] == (0x3F800000u | ((word >> 24) & 255)));
+      assert(dest.u32[1] == (0x3F800000u | (word & 255)));
+      assert(dest.u32[2] == (0x3F800000u | ((word >> 8) & 255)));
+      assert(dest.u32[3] == (0x3F800000u | ((word >> 16) & 255)));
+      assert(std::memcmp(&dest, &scratch, sizeof(dest)) == 0);
+    }
+  }
+}
+''')
+    executable = tmp_path/'unpack.exe'
+    result = subprocess.run([compiler, '-std=c++23', '-O2', '-msse4.1', '-DNOMINMAX',
+        '-DSPDLOG_FMT_EXTERNAL', '-DSPDLOG_COMPILED_LIB', '-I', str(ROOT/'port/src'),
+        '-I', str(sdk), str(source), '-o', str(executable)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    subprocess.run([str(executable)], check=True)

@@ -43,6 +43,15 @@ REXCVAR_DEFINE_BOOL(ch2k8_native_audio,true,"CH2K8/Audio","Use native fixed-dura
 
 bool Ch2k8OpenFrameLog(const char *path);
 bool Ch2k8MountLooseAssets(rex::Runtime& runtime);
+#ifdef _WIN32
+bool Ch2k8ConfigureModExtensions(const std::filesystem::path&,bool,const std::filesystem::path&);
+void Ch2k8PreparePresentation(rex::Runtime&);
+void Ch2k8ShutdownModExtensions();
+REXCVAR_DEFINE_STRING(ch2k8_mod_config,"","CH2K8/Mods","Resolved native extension configuration")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+REXCVAR_DEFINE_BOOL(ch2k8_allow_native_mods,false,"CH2K8/Mods","Explicit opt-in to unsandboxed native mod DLLs")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+#endif
 void Ch2k8CloseFrameLog();
 void Ch2k8ConfigureHotFunctions(int selected_mode, int selected_unpack,
                                 int selected_store, int selected_ram,
@@ -94,6 +103,7 @@ REXCVAR_DEFINE_STRING(
 #include <rex/ui/vulkan/provider.h>
 #endif
 #include <windows.h>
+#include "crash_report.h"
 
 REXCVAR_DEFINE_STRING(
     ch2k8_gpu_capture, "", "CH2K8/Diagnostics",
@@ -112,6 +122,9 @@ public:
 
   static std::unique_ptr<rex::ui::WindowedApp>
   Create(rex::ui::WindowedAppContext &ctx) {
+#ifdef _WIN32
+    Ch2k8InstallCrashReporter();
+#endif
     return std::unique_ptr<Ch2k8App>(
         new Ch2k8App(ctx, "ch2k8", PPCImageConfig));
   }
@@ -163,6 +176,13 @@ protected:
 
   void OnPostSetup() override {
     if (!Ch2k8MountLooseAssets(*runtime())) std::exit(EXIT_FAILURE);
+#ifdef _WIN32
+    Ch2k8PreparePresentation(*runtime());
+    const auto* mods_disabled=std::getenv("CH2K8_MODS_DISABLED");
+    if(!(mods_disabled && std::string_view(mods_disabled)=="1") &&
+        !Ch2k8ConfigureModExtensions(rex::to_path(REXCVAR_GET(ch2k8_mod_config)),
+            REXCVAR_GET(ch2k8_allow_native_mods),runtime()->game_data_root()))std::exit(EXIT_FAILURE);
+#endif
     const auto pack = REXCVAR_GET(ch2k8_vector_pack);
     const auto unpack = REXCVAR_GET(ch2k8_vector_unpack);
     const auto store = REXCVAR_GET(ch2k8_vector_store);
@@ -326,6 +346,9 @@ protected:
   }
 
   void OnShutdown() override {
+#ifdef _WIN32
+    Ch2k8ShutdownModExtensions();
+#endif
     Ch2k8CloseHotLog();
     Ch2k8CloseFrameLog();
     output_thread_.request_stop();

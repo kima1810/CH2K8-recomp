@@ -130,7 +130,7 @@ def test_portable_beta_package_is_self_contained(tmp_path):
     assert not list(install.rglob('*.xex'))
     assert not list(install.rglob('*.pdb'))
     assert (install / 'tools/verify_beta.ps1').is_file()
-    assert not list(install.rglob('*.py'))
+    assert all(p.relative_to(install).parts[0]=='sdk' for p in install.rglob('*.py'))
     assert not list(install.rglob('*python*'))
     assert (install / 'START HERE.md').is_file()
 

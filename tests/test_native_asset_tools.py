@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 ROOT=Path(__file__).resolve().parents[1]
-TOOL=ROOT/'port/out/build/win-amd64-vulkan/ch2k8_tools.exe'
+TOOL=next((p for p in (ROOT/'ch2k8_tools.exe', ROOT/'port/out/build/win-amd64-vulkan/ch2k8_tools.exe') if p.is_file()), ROOT/'ch2k8_tools.exe')
 sys.path[:0]=[str(ROOT/'tools')]
 from loose_assets import import_disc, prepare, encode_literals
 from test_loose_assets import make_disc, texture, scatter_read
@@ -70,7 +70,7 @@ def test_native_import_and_maps_match_development_reference(tmp_path,kind):
     source=tmp_path/'disc';fixture_disc(source,kind)
     reference=tmp_path/'reference';import_disc(source,reference,direct=True)
     native=tmp_path/'native \u00e9 [test]'
-    result=run('import',source,native,'--expected-xex-sha256',IDENTITY)
+    result=run('import',source,native,'--legacy-layout', '--expected-xex-sha256',IDENTITY)
     assert result.returncode==0,result.stderr
     compare(reference,native)
     assert json.loads((reference/'assets.json').read_text())==json.loads((native/'assets.json').read_text())
@@ -113,7 +113,7 @@ def test_native_iso_layouts_transaction_and_identity(tmp_path,base):
     assert not failed.exists() and not list(tmp_path.glob('.ch2k8-import-*'))
 
 
-def single_bank(root, blocks, kind):
+def single_bank(root, blocks, kind, identity=0x12345678, bank_hash=0x11112222):
     root.mkdir();(root/'default.xex').write_bytes(b'XEX2 fixture')
     count=len(blocks);table=32+count*32;record=table+4;header_size=(record+12+count*4+15)&~15
     h=bytearray(header_size);total=header_size+sum(map(len,blocks))
@@ -122,12 +122,220 @@ def single_bank(root, blocks, kind):
     for i,b in enumerate(blocks):
         struct.pack_into('>8I',h,32+i*32,0,0xbb05a9c1,0,len(b),0,cursor,len(b),0);cursor+=len(b)
     struct.pack_into('>I',h,table,record-table+1)
-    struct.pack_into('>3I',h,record,0x12345678,kind,count)
+    struct.pack_into('>3I',h,record,identity,kind,count)
     iff=bytes(h)+b''.join(blocks);size=(2048+len(iff)+2047)&~2047
     archive=bytearray(size);struct.pack_into('>6I',archive,0,0xaa00b3bf,2048,1,0,1,0)
     struct.pack_into('>II8s',archive,24,size//2048,0,'0A'.encode('utf-16-be').ljust(8,b'\0'))
-    struct.pack_into('>4I',archive,40,0x11112222,1,0,len(iff));archive[2048:2048+len(iff)]=iff
+    struct.pack_into('>4I',archive,40,bank_hash,1,0,len(iff));archive[2048:2048+len(iff)]=iff
     (root/'0A').write_bytes(archive)
+
+
+def test_default_import_recovers_bank_and_record_names(tmp_path):
+    source = tmp_path / 'disc'
+    original = texture()
+    single_bank(source, [original[:224], original[0x1000:]], 0x5c369069,
+                zlib.crc32(b'shoe_upper'), zlib.crc32(b'SHOE_100_00.IFF'))
+    game = tmp_path / 'game'
+    result = run('import', source, game, '--expected-xex-sha256', IDENTITY)
+    assert result.returncode == 0, result.stderr
+    shoe = game / 'assets' / 'shoe_100_00.iff' / 'shoe_upper.txtr'
+    assert (shoe / 'record.json').is_file()
+    assert (shoe / 'texture_header.dat').is_file()
+    assert run('validate-runtime', game).returncode == 0
+
+
+def test_unchanged_assets_reuse_preparation_and_changes_invalidate_it(tmp_path):
+    source = tmp_path / 'disc'
+    fixture_disc(source, 'texture')
+    game = tmp_path / 'game'
+    imported = run('import', source, game, '--expected-xex-sha256', IDENTITY)
+    assert imported.returncode == 0, imported.stderr
+
+    def reused():
+        result = run('prepare-if-needed', game)
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)['reused']
+
+    assert reused()
+    dds = next((game / 'assets').rglob('texture.dds'))
+    updated = bytearray(dds.read_bytes())
+    updated[128] ^= 255
+    dds.write_bytes(updated)
+    assert not reused()
+    assert len((game / 'native_dds.index').read_text().splitlines()) == 2
+    assert reused()
+    (game / 'native_dds.index').unlink()
+    assert not reused()
+    assert reused()
+
+
+def test_sparse_overlay_reuses_untouched_bank_without_copying_it(tmp_path):
+    source = tmp_path / 'disc'
+    fixture_disc(source, 'standard')
+    archive = source / '0A'
+    image = bytearray(archive.read_bytes())
+    stock_payload = b'untouched stock bank'
+    stock_hash = 0xff112233
+    stock_sector = len(image) // 2048
+    assert len(image) % 2048 == 0 and struct.unpack_from('>I', image, 16)[0] == 1
+    image.extend(stock_payload + bytes(2048 - len(stock_payload)))
+    struct.pack_into('>I', image, 16, 2)
+    struct.pack_into('>I', image, 24, len(image) // 2048)
+    struct.pack_into('>4I', image, 56, stock_hash, stock_sector, 0, len(stock_payload))
+    archive.write_bytes(image)
+    baseline = tmp_path / 'base'
+    result = run('import', source, baseline, '--expected-xex-sha256', IDENTITY)
+    assert result.returncode == 0, result.stderr
+    manifest = json.loads((baseline / 'assets.json').read_text())
+    edited = next(entry['folder'] for entry in manifest['entries'] if entry['hash'] != stock_hash)
+    stage = tmp_path / 'stage'
+    request = tmp_path / 'request.json'
+    request.write_text(json.dumps([edited]))
+    result = run('initialize-overlay', baseline, stage, request)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['eligible']
+    shutil.copytree(baseline / edited, stage / edited)
+    shutil.copyfile(baseline / 'default.xex', stage / 'default.xex')
+    result = run('prepare-overlay', stage, baseline)
+    assert result.returncode == 0, result.stderr
+    assert not (stage / 'assets/hash_ff112233.iff').exists()
+    assert '@stock/assets/hash_ff112233.iff/payload.dat' in (stage / 'assets.map').read_text()
+    result = run('validate-runtime', stage)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('encoding', ['bc', 'raw', 'ctx1'])
+def test_scene_dds_rebuild_targets_the_slot_without_changing_scene_files(tmp_path, encoding):
+    from xbox_texture import export_dds
+
+    original = texture()
+    pixels = original[0x1000:]
+    descriptor = bytearray(original[:224])
+    if encoding == 'raw':
+        struct.pack_into('>III', descriptor, 0x94, 0x00400002, 6 | 64, 31 | (31 << 13))
+        struct.pack_into('>I', descriptor, 0xa0, 0x688 << 1)
+    if encoding == 'ctx1':
+        struct.pack_into('>I', descriptor, 0x98, 60 | 64)
+    scene = bytearray(64 + 2 * 224)
+    struct.pack_into('>II', scene, 0x20, 2, 64 - 0x24 + 1)
+    for slot in range(2):
+        struct.pack_into('>I', descriptor, 0x6c, slot * len(pixels) + 1)
+        start = 64 + slot * 224
+        scene[start:start + 224] = descriptor
+    source = tmp_path / 'disc'
+    single_bank(source, [scene, pixels * 2], 0xe26c9b5d)
+    game = tmp_path / 'game'
+    result = run('import', source, game, '--expected-xex-sha256', IDENTITY)
+    assert result.returncode == 0, result.stderr
+    catalog = json.loads((game / 'scene_textures.json').read_text())
+    first, second = (game / item['file'] for item in catalog['scenes'][0]['textures'])
+    stock = first.read_bytes()
+    assert stock == second.read_bytes()
+    cpu = next(game.rglob('scene.dat'))
+    gpu = next(game.rglob('scene_gpu.dat'))
+    # Change scene data independently and edit only the second texture.
+    scene[0x10] = 0x55
+    cpu.write_bytes(scene)
+    edited = bytearray(stock)
+    edited[128] ^= 0xff
+    second.write_bytes(edited)
+    result = run('prepare', game)
+    assert result.returncode == 0, result.stderr
+    placement = next(line.split('	')[-1] for line in
+                     (game / 'assets.map').read_text().splitlines()
+                     if '_runtime/scene-textures/' in line)
+    rebuilt = (game / placement).read_bytes()
+    assert rebuilt[:len(pixels)] == pixels
+    if encoding != 'bc':
+        assert (stock[32:36] == b'XRAW' if encoding == 'raw' else stock[84:88] == b'CTX1')
+        expected = bytearray(pixels * 2)
+        expected[len(pixels) + 1] ^= 0xff
+        assert rebuilt == expected
+    else:
+        assert export_dds(bytes(descriptor), rebuilt) == edited
+    assert cpu.read_bytes() == scene and gpu.read_bytes() == pixels * 2
+
+    committed_map = (game / 'assets.map').read_bytes()
+    second.write_bytes(edited[:-1])
+    assert run('prepare', game).returncode != 0
+    assert (game / 'assets.map').read_bytes() == committed_map
+
+    second.write_bytes(stock)
+    result = run('prepare', game)
+    assert result.returncode == 0, result.stderr
+    assert '_runtime/scene-textures/' not in (game / 'assets.map').read_text()
+
+
+def test_named_scene_keeps_an_existing_dds_edit_and_maps_the_new_paths(tmp_path):
+    original = texture()
+    descriptor = bytearray(original[:224])
+    struct.pack_into('>II', descriptor, 0, 0x1122aabb, 0)
+    struct.pack_into('>I', descriptor, 0x6c, 1)
+    scene = bytearray(800)
+    struct.pack_into('>II', scene, 0x20, 1, 64 - 0x24 + 1)
+    scene[64:288] = descriptor
+    for field, target in ((0x2c, 304), (0x38, 352), (0x48, 480),
+                          (332, 392), (384, 428), (480, 710), (608, 656)):
+        struct.pack_into('>I', scene, field, target - field + 1)
+    for field, value in ((0x28, 1), (0x30, 1), (0x44, 1), (304, 78),
+                         (312, 1), (316, 32), (360, 78), (392, 0xb6e7ae40),
+                         (440, 0x1122aabb), (484, zlib.crc32(b'court_mesh')),
+                         (604, 1), (648, 3), (656, 6), (664, 3)):
+        struct.pack_into('>I', scene, field, value)
+    mesh_name = 'court_mesh'.encode('utf-16-be')
+    scene[710:710 + len(mesh_name)] = mesh_name
+    source = tmp_path / 'disc'
+    single_bank(source, [scene, original[0x1000:]], 0xe26c9b5d, zlib.crc32(b'floor'))
+    game = tmp_path / 'game'
+    result = run('import', source, game, '--legacy-layout', '--expected-xex-sha256', IDENTITY)
+    assert result.returncode == 0, result.stderr
+    old_dds = next((game / 'assets' / 'textures').rglob('*.dds'))
+    changed = bytearray(old_dds.read_bytes())
+    changed[128] ^= 255
+    old_dds.write_bytes(changed)
+    result = run('organize-assets', game)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['runtime']['scene_dds_edits'] == 1
+    floor = next((game / 'assets').glob('*/floor.scne'))
+    assert (floor / 'court_mesh_diffuse_1122aabb.dds').read_bytes() == changed
+    assert (floor / 'scene.dat').read_bytes() == scene
+    assert (floor / 'scene_gpu.dat').read_bytes() == original[0x1000:]
+    assert not (game / 'assets' / 'textures').exists()
+    assert 'floor.scne/scene.dat' in (game / 'assets.map').read_text()
+    assert run('validate-runtime', game).returncode == 0
+
+
+def test_named_indexed_dds_keeps_the_xbox_palette_and_other_mips(tmp_path):
+    cpu = bytearray(224)
+    struct.pack_into('>I', cpu, 8, 0x24820002)
+    struct.pack_into('>I', cpu, 0x60, (4 << 16) | 4)
+    struct.pack_into('>II', cpu, 0x68, 33, 1)
+    gpu = bytearray(32 + 1024)
+    gpu[:16] = bytes([1] * 16)
+    gpu[16:21] = bytes([2] * 5)
+    gpu[36:44] = bytes([255, 16, 32, 48, 255, 2, 4, 8])
+    source = tmp_path / 'disc'
+    single_bank(source, [cpu, gpu], 0x5c369069, zlib.crc32(b'jersey_numbers'))
+    game = tmp_path / 'game'
+    result = run('import', source, game, '--expected-xex-sha256', IDENTITY)
+    assert result.returncode == 0, result.stderr
+    folder = next((game / 'assets').glob('*/jersey_numbers.txtr'))
+    dds = folder / 'jersey_numbers.dds'
+    edited = bytearray(dds.read_bytes())
+    assert edited[32:36] == b'XIDX'
+    assert edited[128:132] == bytes([16, 32, 48, 255])
+    edited[128:132] = bytes([64, 80, 96, 255])
+    dds.write_bytes(edited)
+    result = run('prepare', game)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)['scene_dds_edits'] == 1
+    path = next(line.split('	')[-1] for line in (game / 'assets.map').read_text().splitlines()
+                if '_runtime/scene-textures/' in line)
+    runtime = (game / path).read_bytes()
+    index = runtime[0]
+    assert runtime[32 + 4 * index:36 + 4 * index] == bytes([255, 64, 80, 96])
+    assert runtime[1:32] == gpu[1:32] and runtime[36:44] == gpu[36:44]
+    assert (folder / 'texture_pixels.dat').read_bytes() == gpu
 
 
 @pytest.mark.parametrize('kind',['scene','pcm','growing_roster','added_bank'])
@@ -144,7 +352,7 @@ def test_native_extended_edit_protocol_matches_reference(tmp_path,kind):
     elif kind=='growing_roster':single_bank(source,[bytes(range(32))],0xc61649b2)
     else:make_disc(source)
     reference=tmp_path/'reference';import_disc(source,reference,direct=True)
-    native=tmp_path/'native';result=run('import',source,native,'--expected-xex-sha256',IDENTITY)
+    native=tmp_path/'native';result=run('import',source,native,'--legacy-layout', '--expected-xex-sha256',IDENTITY)
     assert result.returncode==0,result.stderr
     for root in (reference,native):
         metadata=json.loads((root/'assets.json').read_text());entry=metadata['entries'][0]

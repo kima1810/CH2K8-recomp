@@ -16,8 +16,12 @@ param(
     [string]$PythonExecutable,
     [string]$InstallDirectory,
     [string]$Executable,
+    [string]$InstallationRoot,
+    [string]$ModCacheDirectory,
+    [string]$LaunchProgressFile,
     [string]$PreviewOutput,
     [switch]$Launch,
+    [switch]$WithoutMods,
     [switch]$CheckSetup,
     [string]$ReportOutput,
     [switch]$ValidateOnly
@@ -25,17 +29,66 @@ param(
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSHOME 'Modules/Microsoft.PowerShell.Utility')
 . (Join-Path $PSScriptRoot 'beta_diagnostics.ps1')
-$repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'chmod.ps1')
+. (Join-Path $PSScriptRoot 'chmod_ui.ps1')
+. (Join-Path $PSScriptRoot 'runtime_update.ps1')
+$runtimeRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = if($InstallationRoot){[IO.Path]::GetFullPath($InstallationRoot).TrimEnd('\')}else{$runtimeRoot}
 $settingsPath = Join-Path $repoRoot 'port/userdata/launcher.json'
+$modsRoot = Join-Path $repoRoot 'mods'
+$modsSettings = Join-Path $repoRoot 'port/userdata/mods.json'
 if (-not $GameData) {
     $GameData = if (Test-Path -LiteralPath (Join-Path $repoRoot 'default.xex')) { $repoRoot }
         elseif (Test-Path -LiteralPath (Join-Path $repoRoot 'game/default.xex')) { Join-Path $repoRoot 'game' }
+        elseif (Test-Path -LiteralPath (Join-Path $repoRoot 'port/out/vanilla-game/default.xex')) { Join-Path $repoRoot 'port/out/vanilla-game' }
+        elseif (Test-Path -LiteralPath (Join-Path $repoRoot 'port/out/folder-game/default.xex')) { Join-Path $repoRoot 'port/out/folder-game' }
         else { Join-Path $repoRoot 'work/ch2k8/XBOX/disc' }
 }
 function ConvertTo-NativeArgument([string]$Value) {
     if ($Value.Contains('"')) { throw 'Paths must not contain double quotes.' }
     # Escape trailing backslashes before the closing native quote.
     return '"' + ($Value -replace '(\\+)$', '$1$1') + '"'
+}
+function Invoke-Ch2k8UpdateDialog([switch]$Rollback) {
+    $worker=$null;$dialog=$null;$timer=$null
+    try{
+        $job=Get-ModPath (Get-Ch2k8UpdateState $repoRoot) ('jobs/'+[guid]::NewGuid().ToString('N'))
+        $null=[IO.Directory]::CreateDirectory($job)
+        $argsList=@('-NoProfile','-ExecutionPolicy','Bypass','-File',(Join-Path $PSScriptRoot 'update_runtime.ps1'),'-InstallationRoot',$repoRoot,'-CurrentRuntime',$runtimeRoot,'-Job',$job)
+        if($Rollback){$argsList+='-Rollback'}
+        $info=New-Object Diagnostics.ProcessStartInfo
+        $info.FileName=Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        $info.Arguments=($argsList|ForEach-Object{ConvertTo-NativeArgument $_}) -join ' '
+        $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+        $worker=[Diagnostics.Process]::Start($info)
+        $outTask=$worker.StandardOutput.ReadToEndAsync();$errTask=$worker.StandardError.ReadToEndAsync()
+        $dialog=New-Object System.Windows.Forms.Form
+        $dialog.Text=if($Rollback){'Rollback runtime update'}else{'Update from GitHub'}
+        $dialog.ClientSize=New-Object Drawing.Size(560,170);$dialog.StartPosition='CenterParent';$dialog.FormBorderStyle='FixedDialog';$dialog.ControlBox=$false
+        $label=New-Object System.Windows.Forms.Label;$label.SetBounds(18,18,524,105);$label.Text='Preparing runtime update. No game will be started.';$dialog.Controls.Add($label)
+        $bar=New-Object System.Windows.Forms.ProgressBar;$bar.Style='Marquee';$bar.SetBounds(18,132,524,20);$dialog.Controls.Add($bar)
+        $progress=Join-Path $job 'status.json';$timer=New-Object System.Windows.Forms.Timer;$timer.Interval=300
+        $timer.Add_Tick({
+            try{if([IO.File]::Exists($progress)){$p=[IO.File]::ReadAllText($progress)|ConvertFrom-Json;$label.Text=$p.phase+"`r`n"+$p.message}}catch{}
+            if($worker.HasExited){$timer.Stop();$dialog.Close()}
+        })
+        $timer.Start();$null=$dialog.ShowDialog($form);$worker.WaitForExit()
+        [IO.File]::WriteAllText((Join-Path $job 'stdout.log'),$outTask.GetAwaiter().GetResult())
+        [IO.File]::WriteAllText((Join-Path $job 'stderr.log'),$errTask.GetAwaiter().GetResult())
+        if(-not [IO.File]::Exists($progress)){throw "Updater stopped unexpectedly. Details: $job"}
+        $result=Read-ModJson $progress
+        if($worker.ExitCode -ne 0 -or $result.success -ne $true){throw ($result.message+"`r`nDetails: $job")}
+        $status.Text=$result.message
+        # Start the verified launcher only; never start the game after an update.
+        $restart=New-Object Diagnostics.ProcessStartInfo
+        $restart.FileName=$info.FileName
+        $restart.Arguments=(@('-NoProfile','-STA','-WindowStyle','Hidden','-ExecutionPolicy','Bypass','-File',(Join-Path $repoRoot 'tools/start_launcher.ps1'))|ForEach-Object{ConvertTo-NativeArgument $_}) -join ' '
+        $restart.UseShellExecute=$false;$restart.CreateNoWindow=$true
+        $null=[Diagnostics.Process]::Start($restart);$form.Close()
+    }catch{
+        $status.Text=$_.Exception.Message
+        [System.Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'Runtime update stopped','OK','Information')|Out-Null
+    }finally{if($timer){$timer.Stop();$timer.Dispose()};if($dialog){$dialog.Dispose()};if($worker){$worker.Dispose()}}
 }
 function Invoke-Ch2k8SourceBuild {
     param([string]$InputSource, [switch]$Interactive)
@@ -93,7 +146,7 @@ function Invoke-Ch2k8SourceBuild {
     } finally {$worker.Dispose()}
 }
 function Get-AssetTool {
-    foreach ($candidate in @((Join-Path $repoRoot 'ch2k8_tools.exe'), (Join-Path $repoRoot 'port/out/build/win-amd64-vulkan/ch2k8_tools.exe'), (Join-Path $repoRoot 'port/out/build/win-amd64/ch2k8_tools.exe'), (Join-Path $repoRoot 'out/native-tools/ch2k8_tools.exe'))) {
+    foreach ($candidate in @((Join-Path $runtimeRoot 'ch2k8_tools.exe'), (Join-Path $repoRoot 'ch2k8_tools.exe'), (Join-Path $repoRoot 'port/out/build/win-amd64-vulkan/ch2k8_tools.exe'), (Join-Path $repoRoot 'port/out/build/win-amd64/ch2k8_tools.exe'), (Join-Path $repoRoot 'out/native-tools/ch2k8_tools.exe'))) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
     }
     throw 'Native asset tools are missing. Extract the complete beta ZIP, or build the ch2k8_tools target from source.'
@@ -112,7 +165,7 @@ function Import-Ch2k8Iso {
     $cancelFile = Join-Path $jobFolder 'cancel'
     $outputFile = Join-Path $jobFolder 'result.json'
     $errorFile = Join-Path $jobFolder 'import.log'
-    $parameters = @('import', $Image, $Destination,
+    $parameters = @('import', $Image, $Destination, '--named-assets',
         '--progress-file', $progressFile, '--cancel-file', $cancelFile)
     foreach ($argument in $parameters) { if ($argument.Contains('"')) { throw 'Paths must not contain double quotes.' } }
     $quoted = $parameters | ForEach-Object { ConvertTo-NativeArgument $_ }
@@ -122,6 +175,7 @@ function Import-Ch2k8Iso {
     $startInfo.FileName = $assetTool
     $startInfo.Arguments = $quoted -join ' '
     $startInfo.UseShellExecute = $false
+    $startInfo.EnvironmentVariables['CH2K8_CRASH_DUMP'] = [IO.Path]::ChangeExtension($logFile, '.dmp')
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
@@ -199,13 +253,13 @@ function Get-LaunchConfiguration {
     if ($Hertz -lt 24 -or $Hertz -gt 240) { throw 'Refresh rate must be between 24 and 240 Hz.' }
     if ($Mode -notin @('windowed', 'borderless', 'exclusive')) { throw 'Choose a window mode.' }
     if (-not $Program) {
-        $portableBuild = Join-Path $repoRoot 'ch2k8.exe'
+        $portableBuild = Join-Path $runtimeRoot 'ch2k8.exe'
         $dualBuild = Join-Path $repoRoot 'port/out/build/win-amd64-vulkan/ch2k8.exe'
         $preset = if ($Backend -eq 'vulkan' -or (Test-Path -LiteralPath $dualBuild)) { 'win-amd64-vulkan' } else { 'win-amd64' }
         $Program = if (Test-Path -LiteralPath $portableBuild -PathType Leaf) { $portableBuild } else { Join-Path $repoRoot "port/out/build/$preset/ch2k8.exe" }
     }
     if (-not $AllowMissing -and -not (Test-Path -LiteralPath $Program -PathType Leaf)) {
-        throw "Game build is missing: $Program. This folder has no compiled game. Import ISO extracts assets; it does not compile the source. Use Build from XEX / ISO in the current full source checkout, or download CH2K8-ZMO-beta1-Windows-x64-*.zip under Assets at https://github.com/kima1810/CH2K8-decomp/releases/tag/ZMO-beta1-20261106 (not Source code.zip)."
+        throw "Game build is missing: $Program. This folder has no compiled game. Import ISO extracts assets; it does not compile the source. Use Build from XEX / ISO in the current full source checkout, or download CH2K8-ZMO-beta1-Windows-x64-*.zip under Assets at https://github.com/kima1810/CH2K8-recomp/releases (not Source code.zip)."
     }
     if (-not $AllowMissing -and -not (Test-Path -LiteralPath (Join-Path $Data 'default.xex') -PathType Leaf)) {
         throw 'Choose the extracted Xbox 360 game folder containing default.xex.'
@@ -242,7 +296,9 @@ function Invoke-Ch2k8Preparation {
     $assetTool = Get-AssetTool
     $info = New-Object Diagnostics.ProcessStartInfo
     $info.FileName = $assetTool
-    $info.Arguments = (@('prepare', $AssetRoot) | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
+    $prepareArgs=@('prepare-if-needed', $AssetRoot)
+    if($LaunchProgressFile){$prepareArgs+=@('--progress-file',$LaunchProgressFile)}
+    $info.Arguments = ($prepareArgs | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
@@ -269,7 +325,7 @@ function Invoke-Ch2k8Preparation {
             $dialog.Controls.Add($bar)
             $timer = New-Object System.Windows.Forms.Timer
             $timer.Interval = 250
-            $timer.Add_Tick({ if ($worker.HasExited) { $timer.Stop(); $dialog.Close() } })
+            $timer.Add_Tick({ if ($worker.HasExited) { $timer.Stop(); $dialog.Close() } }.GetNewClosure())
             try { $timer.Start(); $null = $dialog.ShowDialog($form) }
             finally { $timer.Stop(); $timer.Dispose(); $dialog.Dispose() }
         }
@@ -281,19 +337,85 @@ function Invoke-Ch2k8Preparation {
 }
 
 function Start-Ch2k8 {
+    param($Configuration,[switch]$Background)
+    $lockFile=Join-Path $repoRoot 'port/userdata/mod-launch.lock'
+    $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($lockFile))
+    try{$launchLock=[IO.File]::Open($lockFile,[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}catch{throw 'Another launcher is starting CH2K8.'}
+    try{return Start-Ch2k8Unlocked $Configuration -Background:$Background}finally{$launchLock.Dispose()}
+}
+function Start-Ch2k8Unlocked {
     param($Configuration, [switch]$Background)
     $setup = Test-BetaEnvironment $Configuration
     if (-not $setup.ready) { throw ($setup.failures -join [Environment]::NewLine) }
     if (Get-Process ch2k8 -ErrorAction SilentlyContinue) { throw 'CH2K8 is already running.' }
+    $baselineArg=@($Configuration.arguments|Where-Object{$_.StartsWith('--user_data_root=')})[0]
+    $rosterBaseline=$baselineArg.Substring('--user_data_root='.Length)
+    $rosterProfiles=Join-Path $repoRoot 'port/userdata/mod-profiles'
+    $rosterState=Join-Path $repoRoot 'port/userdata/uniform-activation'
+    $rosterRoots=@($rosterBaseline)
     $rootArgument = $Configuration.arguments | Where-Object { $_.StartsWith('--game_data_root=') }
     $assetRoot = $rootArgument.Substring('--game_data_root='.Length)
+    if ((Test-Path -LiteralPath (Join-Path $assetRoot 'court_artwork.json') -PathType Leaf) -or (Test-Path -LiteralPath (Join-Path $assetRoot 's258_artwork.json') -PathType Leaf)) {
+        $python = (Get-Command python.exe -ErrorAction Stop).Source
+        & $python (Join-Path $PSScriptRoot 'court_artwork.py') sync $assetRoot
+        if ($LASTEXITCODE -ne 0) { throw 'Could not synchronize the court artwork PNG files.' }
+    }
     if (Test-Path -LiteralPath (Join-Path $assetRoot 'assets.json')) {
         if ($Configuration.arguments -contains '--ch2k8_renderer=vulkan') {
             throw 'Native DDS replacement currently requires Direct3D 12. Choose D3D12 for the folder installation.'
         }
+    }
+    $vanillaAssetRoot=$assetRoot
+    $selection = @()
+    $allowCode=$false
+    if (-not $WithoutMods -and (Test-Path -LiteralPath $modsSettings)) {
+        $savedMods = Read-ModJson $modsSettings
+        Assert-ChmodSettings $savedMods
+        $selection = $savedMods.enabled
+        $allowCode=($savedMods.allow_native_code -eq $true)
+    }
+    Write-ChmodProgress $LaunchProgressFile 'Checking selected mods...'
+    $plan = if ($selection.Count) { Resolve-Chmods $assetRoot $modsRoot $selection -AllowCode:$allowCode } else { $null }
+    $selectedRenderer = if ($Configuration.arguments -contains '--ch2k8_renderer=vulkan') { 'vulkan' } else { 'd3d12' }
+    Assert-ChmodLaunchCompatibility $plan $Configuration.executable $selectedRenderer
+    if ($selectedRenderer -eq 'vulkan' -and [IO.File]::Exists((Join-Path $assetRoot 'assets.json'))) {
+        throw 'The Xbox loose-resource installation requires Direct3D 12. Change the renderer in the launcher.'
+    }
+    Restore-ChmodRosterActivation $rosterBaseline $rosterProfiles $rosterState
+    if ($plan -and $plan.active.Count) {
+        $cacheRoot=if($ModCacheDirectory){$ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ModCacheDirectory)}else{Join-Path $repoRoot 'port/userdata/mod-cache'}
+        $runtimeReceipt=Join-Path (Split-Path -Parent $Configuration.executable) 'chmod-runtime.json'
+        $sparse=$false
+        if([IO.File]::Exists($runtimeReceipt)){
+            $runtime=Read-ModJson $runtimeReceipt
+            $sparse=('runtime.sparse_assets' -cin $runtime.capabilities -and $runtime.exe_sha256 -ceq (Get-ModHash $Configuration.executable))
+        }
+        $assetRoot = New-ChmodCache $assetRoot $cacheRoot $plan { param($folder) Invoke-Ch2k8Preparation $folder -Interactive:([bool]($form -and $form.Visible -and -not $Background)) } -AssetTool (Get-AssetTool) -Sparse:$sparse -ProgressFile $LaunchProgressFile
+        if($assetRoot -eq $vanillaAssetRoot -and [IO.File]::Exists((Join-Path $assetRoot 'assets.json'))){
+            Invoke-Ch2k8Preparation $assetRoot -Interactive:([bool]($form -and $form.Visible -and -not $Background))
+        }
+        $Configuration.arguments = @($Configuration.arguments | ForEach-Object { if ($_.StartsWith('--game_data_root=')) { "--game_data_root=$assetRoot" } else { $_ } })
+        if($plan.uniforms.Count -or @($plan.replacements|Where-Object {$_.kind -ceq 'dds.replace'}).Count){$Configuration.arguments+='--ch2k8_native_dds=true'}
+        if($plan.roster -or $plan.extensions.Count){
+            $userArg=@($Configuration.arguments|Where-Object{$_.StartsWith('--user_data_root=')})[0]
+            $baseline=$userArg.Substring('--user_data_root='.Length)
+            $isolated=New-ChmodRosterProfile $baseline (Join-Path $repoRoot 'port/userdata/mod-profiles') $plan
+            $rosterRoots+=$isolated
+            $Configuration.arguments=@($Configuration.arguments|ForEach-Object{if($_.StartsWith('--user_data_root=')){"--user_data_root=$isolated"}else{$_}})
+        }
+        if($plan.extensions.Count){
+            $configFile=Join-Path $repoRoot 'port/userdata/native-mod-launch.json'
+            $nativeApi=if(@($plan.extensions|Where-Object{$_.abi -eq 2}).Count){'1.3.0'}else{'1.2.0'}
+            Write-ModJson $configFile ([ordered]@{schema_version=1;mod_api=$nativeApi;xex_sha256=$script:ChmodXex;mod_root=[IO.Path]::GetFullPath($modsRoot);extensions=$plan.extensions})
+            $Configuration.arguments+=@("--ch2k8_mod_config=$configFile",'--ch2k8_allow_native_mods=true')
+        }
+    } elseif (Test-Path -LiteralPath (Join-Path $assetRoot 'assets.json')) {
         Invoke-Ch2k8Preparation $assetRoot -Interactive:([bool]($form -and $form.Visible -and -not $Background))
     }
-    $logRoot = Join-Path (Split-Path -Parent $Configuration.executable) 'logs'
+    if(-not $WithoutMods -and $plan -and $plan.active.Count -and [IO.File]::Exists((Join-Path $vanillaAssetRoot 'assets.json'))){
+        Sync-ChmodRosterActivation $rosterBaseline $rosterProfiles $rosterState $rosterRoots $plan $vanillaAssetRoot
+    }
+    $logRoot = Join-Path $repoRoot 'logs'
     $null = New-Item -ItemType Directory -Path $logRoot -Force
     $logFile = Join-Path $logRoot ('ch2k8-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-ffff') + '.log')
     $launchArguments = @($Configuration.arguments) + "--log_file=$logFile"
@@ -306,7 +428,9 @@ function Start-Ch2k8 {
     $startInfo.Arguments = $nativeArguments -join ' '
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = [bool]$Background
+    $startInfo.EnvironmentVariables['CH2K8_MODS_DISABLED']=if($plan -and $plan.extensions.Count -and -not $WithoutMods){'0'}else{'1'}
     $startInfo.WindowStyle = if ($Background) { 'Hidden' } else { 'Normal' }
+    Write-ChmodProgress $LaunchProgressFile 'Opening College Hoops 2K8...' 1 1
     return [Diagnostics.Process]::Start($startInfo)
 }
 
@@ -351,7 +475,7 @@ try {
         if (-not $PSBoundParameters.ContainsKey('RefreshRate') -and $saved.refresh_rate -ge 24 -and $saved.refresh_rate -le 240) { $RefreshRate = [int]$saved.refresh_rate }
         if (-not $PSBoundParameters.ContainsKey('WindowMode') -and $saved.window_mode -in @('windowed', 'borderless', 'exclusive')) { $WindowMode = $saved.window_mode }
         if (-not $PSBoundParameters.ContainsKey('GameData') -and $saved.game_data) { $GameData = [string]$saved.game_data }
-        if (-not $PSBoundParameters.ContainsKey('Executable') -and $saved.executable -and (Test-Path -LiteralPath (Join-Path $repoRoot 'port/ch2k8_manifest.toml')) -and (Test-Path -LiteralPath $saved.executable -PathType Leaf)) { $Executable=[string]$saved.executable }
+        if ($runtimeRoot -ieq $repoRoot -and -not $PSBoundParameters.ContainsKey('Executable') -and $saved.executable -and (Test-Path -LiteralPath (Join-Path $repoRoot 'port/ch2k8_manifest.toml')) -and (Test-Path -LiteralPath $saved.executable -PathType Leaf)) { $Executable=[string]$saved.executable }
     }
 } catch { Write-Verbose "Ignoring invalid launcher settings: $_" }
 
@@ -522,7 +646,7 @@ $form.Controls.Add($logs)
 $logs.Add_Click({
     try {
         $configuration = Get-LaunchConfiguration @('d3d12', 'vulkan')[$backend.SelectedIndex] ([string]$size.SelectedItem) ([int]$rate.Value) @('windowed', 'borderless', 'exclusive')[$mode.SelectedIndex] $dataBox.Text $Executable
-        $folder = Join-Path (Split-Path -Parent $configuration.executable) 'logs'
+        $folder = Join-Path $repoRoot 'logs'
         $null = New-Item -ItemType Directory -Path $folder -Force
         Start-Process explorer.exe -ArgumentList ('"' + $folder + '"')
     } catch { $status.Text = $_.Exception.Message }
@@ -561,20 +685,104 @@ $buildButton.Add_Click({
     }catch{[System.Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'Source build','OK','Error')|Out-Null}finally{$dialog.Dispose()}
 })
 $download=New-Object System.Windows.Forms.Button
-$download.Text='Download runnable beta'
+$download.Text='Update from GitHub'
 $download.SetBounds(312,648,274,36);$form.Controls.Add($download)
-$download.Add_Click({Start-Process 'https://github.com/kima1810/CH2K8-decomp/releases/tag/ZMO-beta1-20261106'})
-$distributionHint=Add-Label 'GitHub source ZIPs require compilation. The release asset includes ch2k8.exe and all runtime files.' 24 700 562
+$download.Add_Click({Invoke-Ch2k8UpdateDialog})
+$distributionHint=Add-Label 'GitHub updates use prebuilt Windows releases, including betas. Assets, mods and saves stay in this installation.' 24 744 562
 $distributionHint.Height=42;$distributionHint.ForeColor=[Drawing.Color]::Silver
 if(-not (Test-Path -LiteralPath (Join-Path $repoRoot 'ch2k8.exe')) -and -not (Test-Path -LiteralPath (Join-Path $repoRoot 'port/out/build/win-amd64-vulkan/ch2k8.exe')) -and -not (Test-Path -LiteralPath (Join-Path $repoRoot 'port/out/build/win-amd64/ch2k8.exe'))){$status.Text='Source checkout: build from XEX / ISO, or download the runnable beta below. An ISO import alone does not compile the game.'}
 $form.AcceptButton = $play
+$modsButton=New-Object System.Windows.Forms.Button
+$modsButton.Text='Mods...'
+$modsButton.SetBounds(260,588,120,46);$form.Controls.Add($modsButton)
+$modsButton.Add_Click({
+    try {
+        $modsRenderer = @('d3d12', 'vulkan')[$backend.SelectedIndex]
+        $config = Get-LaunchConfiguration $modsRenderer ([string]$size.SelectedItem) ([int]$rate.Value) @('windowed', 'borderless', 'exclusive')[$mode.SelectedIndex] $dataBox.Text $Executable -AllowMissing
+        $modsGame = ($config.arguments | Where-Object { $_.StartsWith('--game_data_root=') }).Substring('--game_data_root='.Length)
+        Show-ChmodView $form $modsGame $modsRoot $modsSettings -Executable $config.executable -Renderer $modsRenderer
+    }
+    catch { [System.Windows.Forms.MessageBox]::Show($form,$_.Exception.Message,'Mods','OK','Error') | Out-Null }
+})
+$rollbackUpdate=New-Object System.Windows.Forms.Button
+$rollbackUpdate.Text='Rollback update'
+$rollbackUpdate.SetBounds(396,588,190,46);$form.Controls.Add($rollbackUpdate)
+$rollbackUpdate.Add_Click({Invoke-Ch2k8UpdateDialog -Rollback})
+$recovery=New-Object System.Windows.Forms.Button
+$recovery.Text='Launch without mods'
+$recovery.SetBounds(24,700,562,36);$form.Controls.Add($recovery)
+$recovery.Add_Click({ $script:WithoutMods=$true; $play.PerformClick(); $script:WithoutMods=$false })
 $play.Add_Click({
     try {
         $selectedBackend = @('d3d12', 'vulkan')[$backend.SelectedIndex]
         $selectedMode = @('windowed', 'borderless', 'exclusive')[$mode.SelectedIndex]
         $selectedPath = @('auto', 'native', 'accurate')[$renderMode.SelectedIndex]
         $configuration = Get-LaunchConfiguration $selectedBackend ([string]$size.SelectedItem) ([int]$rate.Value) $selectedMode $dataBox.Text $Executable $selectedPath
-        $null = Start-Ch2k8 $configuration
+        $progressFile=Join-Path ([IO.Path]::GetTempPath()) ('ch2k8-launch-'+[guid]::NewGuid().ToString('N')+'.json')
+        $workerArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,
+            '-InstallationRoot',$repoRoot,'-Launch','-Renderer',$selectedBackend,
+            '-RenderPath',$selectedPath,'-Resolution',[string]$size.SelectedItem,
+            '-RefreshRate',[string]$rate.Value,'-WindowMode',$selectedMode,
+            '-GameData',$dataBox.Text,'-Executable',$configuration.executable,'-LaunchProgressFile',$progressFile)
+        if($WithoutMods){$workerArgs+='-WithoutMods'}
+        if($ModCacheDirectory){$workerArgs+=@('-ModCacheDirectory',$ModCacheDirectory)}
+        $info=New-Object Diagnostics.ProcessStartInfo
+        $info.FileName=Join-Path $PSHOME 'powershell.exe'
+        if(-not [IO.File]::Exists($info.FileName)){$info.FileName=Join-Path $PSHOME 'pwsh.exe'}
+        $info.Arguments=($workerArgs | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
+        $info.UseShellExecute=$false
+        $info.CreateNoWindow=$true
+        $info.RedirectStandardOutput=$true
+        $info.RedirectStandardError=$true
+        $worker=[Diagnostics.Process]::Start($info)
+        try {
+            $workerOut=$worker.StandardOutput.ReadToEndAsync()
+            $workerErr=$worker.StandardError.ReadToEndAsync()
+            $progress=New-Object System.Windows.Forms.Form
+            $progress.Text='Starting College Hoops 2K8'
+            $progress.ClientSize=New-Object Drawing.Size(460,100)
+            $progress.StartPosition='CenterParent'
+            $progress.FormBorderStyle='FixedDialog'
+            $progress.ControlBox=$false
+            $label=New-Object System.Windows.Forms.Label
+            $label.Text='Starting the game. Changed assets may need preparation.'
+            $label.SetBounds(15,15,430,24)
+            $progress.Controls.Add($label)
+            $bar=New-Object System.Windows.Forms.ProgressBar
+            $bar.Style='Marquee'
+            $bar.SetBounds(15,53,430,22)
+            $progress.Controls.Add($bar)
+            $timer=New-Object System.Windows.Forms.Timer
+            $timer.Interval=250
+            $timer.Add_Tick({
+                if($worker.HasExited){$timer.Stop();$progress.Close();return}
+                if(-not [IO.File]::Exists($progressFile)){return}
+                try {
+                    $share=[IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete
+                    $reader=[IO.StreamReader]::new([IO.File]::Open($progressFile,[IO.FileMode]::Open,[IO.FileAccess]::Read,$share))
+                    try{$state=$reader.ReadToEnd() | ConvertFrom-Json}finally{$reader.Dispose()}
+                    $label.Text=$state.message
+                    if($state.total -gt 0){
+                        $bar.Style='Continuous'
+                        $bar.Value=[int][Math]::Min(100,[Math]::Max(0,(100.0*$state.done/$state.total)))
+                    }else{$bar.Style='Marquee'}
+                }catch{Write-Verbose "Launch progress refresh skipped: $($_.Exception.Message)"}
+            }.GetNewClosure())
+            try {
+                $timer.Start()
+                $null=$progress.ShowDialog($form)
+            } finally {
+                $timer.Dispose()
+                $progress.Dispose()
+            }
+            $worker.WaitForExit()
+            if($worker.ExitCode -ne 0){
+                throw ($workerErr.GetAwaiter().GetResult()+$workerOut.GetAwaiter().GetResult())
+            }
+        } finally {
+            $worker.Dispose()
+            if([IO.File]::Exists($progressFile)){[IO.File]::Delete($progressFile)}
+        }
         $null = New-Item -ItemType Directory -Path (Split-Path -Parent $settingsPath) -Force
         @{ renderer = $selectedBackend; render_path = $selectedPath; resolution = [string]$size.SelectedItem;
            refresh_rate = [int]$rate.Value; window_mode = $selectedMode;

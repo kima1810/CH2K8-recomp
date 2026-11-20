@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.25)
+project(scorebug_preview LANGUAGES CXX)
+if(NOT WIN32)
+    message(FATAL_ERROR "The preview provider requires the Windows runtime")
+endif()
+add_library(scorebug_preview SHARED scorebug_preview.cpp)
+target_compile_features(scorebug_preview PRIVATE cxx_std_20)
+set_target_properties(scorebug_preview PROPERTIES OUTPUT_NAME "scorebug-preview")

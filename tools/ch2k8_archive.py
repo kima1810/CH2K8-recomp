@@ -191,12 +191,19 @@ def open_archive(path: Path, names: dict[int, str] | None = None) -> Archive:
         magic, align, na, r0, nf, r1 = HEADER.unpack(hdr)
         if magic != MAGIC:
             raise SystemExit(f"bad magic {magic:08X}")
+        if align != 0x800 or not 1 <= na <= 26 or nf > 100_000:
+            raise ValueError("Invalid archive alignment or table counts")
         pbytes = f.read(na * PART.size)
         tbytes = f.read(nf * TOC.size)
+        if len(pbytes) != na * PART.size or len(tbytes) != nf * TOC.size:
+            raise ValueError("Truncated archive tables")
     a = Archive(root, magic, align, na, r0, nf, r1, header_bytes=hdr + pbytes + tbytes)
     for i in range(na):
         units, unk, raw = PART.unpack_from(pbytes, i * PART.size)
-        a.parts.append(Part(raw.decode("utf-16-be").rstrip("\0"), units, unk, raw))
+        name = raw.decode("utf-16-be").rstrip("\0")
+        if len(name) != 2 or name[0] != "0" or not "A" <= name[1] <= "Z":
+            raise ValueError("Invalid archive part name")
+        a.parts.append(Part(name, units, unk, raw))
     for i in range(nf):
         h, off, unk, size = TOC.unpack_from(tbytes, i * TOC.size)
         a.entries.append(Entry(i, h, off, unk, size, off * align,
@@ -414,6 +421,17 @@ def cmd_list(a: Archive, args) -> None:
         out.close()
 
 
+def validate_filename(name: str) -> None:
+    """Accept one portable filename without Windows path or device aliases."""
+    stem = name.split(".", 1)[0].rstrip(" ").upper()
+    devices = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}
+    numbered_device = (len(stem) == 4 and stem[:3] in {"COM", "LPT"}
+                       and stem[3] in "0123456789¹²³")
+    if (not name or name.endswith((".", " ")) or stem in devices or numbered_device
+            or any(ord(c) < 32 or c in '/\\:<>"|?*' for c in name)):
+        raise ValueError(f"Unsafe extraction filename: {name!r}")
+
+
 def cmd_extract(a: Archive, args) -> None:
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
@@ -425,11 +443,15 @@ def cmd_extract(a: Archive, args) -> None:
         sel = [e for e in sel if e.hash in want]
     for e in sel:
         size = e.extent if args.full_extent else e.size
+        name = e.name or f"{e.index:05d}_{e.hash:08X}.bin"
+        validate_filename(name)
+        fn = out / name
         data = a.read(e.offset, size)
-        fn = out / (e.name or f"{e.index:05d}_{e.hash:08X}.bin")
-        if fn.exists():
-            raise SystemExit(f"refusing to overwrite {fn}")
-        fn.write_bytes(data)
+        try:
+            with fn.open("xb") as output:
+                output.write(data)
+        except FileExistsError:
+            raise SystemExit(f"refusing to overwrite {fn}") from None
         print(f"{e.index:5} {fn.name:32} {size:>10}  sha256={hashlib.sha256(data).hexdigest()[:16]}")
 
 
