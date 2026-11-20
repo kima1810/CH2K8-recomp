@@ -75,6 +75,10 @@ slot. Never guess these from the display name. Arbitrary DAT replacement, generi
 scene topology changes, animation, LAYT and audio do not have a general export
 capability. Viewing a resource in Studio does not imply a loader writer exists.
 
+Court authoring belongs in Studio. Its export supplies the paired CPU/GPU
+components and manifest. The recomp validates and stages those components against
+the supported source layout. Ordinary DDS repainting retains original geometry
+and markings. No standalone court-building command is provided by this PR.
 For a full court, use **Build Court.cmd** or the installed native tool:
 
 ```text
@@ -123,6 +127,9 @@ The published Button Style hook combines a native choice provider with condition
 PlayStation DDS payloads. Coverage includes menu/controller prompts and the
 supported on-court passing atlas. See [Button Style](../sdk/BUTTON_STYLE.md).
 
+Additional [scorebug hook research](findings/2026-11-19-scorebug-elements.md)
+records scene ownership, native live fields and rendering boundaries. It does not
+add a public scorebug capability or distribute a scorebug mod.
 ESPN/USA Sports scorebugs use a separate opt-in preview DLL and converted Xbox
 scenes. ESPN is the initial choice. A change takes effect on the next main match
 scene construction. This preview provider is separate from the public CHMOD ABI.

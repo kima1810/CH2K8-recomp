@@ -52,5 +52,6 @@ cannot downgrade the local SDK runtime. Tests/game execution remain user-run.
 Start with the [folder modding guide](docs/MODDING.md) and
 [editor export contract](docs/formats/mod-folder-editor.md).
 The [recent ZMO research index](docs/research/zmo-beta-research.md) links the
+modloader, native-hook and performance findings, with
 asset, court, uniform, native-hook, scorebug and portability findings, with
 remaining verification work recorded for each feature.

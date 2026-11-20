@@ -1,3 +1,11 @@
+# Scorebug hook research
+
+Read-only Ghidra research identifies native scene ownership, text drawing,
+material state and live match fields for the supported Xbox executable.
+The XEX SHA-256 is
+`71e8983d1cc009e485696aad19b5fa4b4661761870e2c8972717b932c1e4be36`.
+Addresses below apply to that revision. The reusable headless entry point is
+`ghidra/DecompileScorebug.java`. Research does not establish a new public hook ABI.
 # Scorebug scene conversion and live elements
 
 The ESPN and USA Sports preview uses converted PS3 scene geometry with native
@@ -45,6 +53,37 @@ state. The arrow reads `859FDA98` without changing it. It follows native
 alternating possession independently of current ball control. Rank fields have
 no verified live poll source in this implementation.
 
+## Rendering boundaries
+
+Native instance draw `84D23B80` and material preparation `84D2DC20` are useful
+boundaries for observing scene-specific draw state. Render-state submission is
+`84D36C60`. Xbox alpha enable is state 60, source blend 72, destination blend 76,
+blend operation 80, alpha test 96, reference 100 and comparison 104. Xbox
+source-alpha is 6, inverse-source-alpha 7 and GREATER comparison 4. Desktop D3D9
+enumeration values differ. Any adapter changing shared state must preserve its
+ownership and restore temporary material/pose edits after command construction.
+
+## Scene-format findings
+
+PS3 and Xbox scenes require more than relabeling data. Draw records have a
+48-byte stride with material slot at +32. Mesh transforms/bounds, bone rest
+transforms, instance poses, text styles and relative pointers must be preserved.
+Vertex bone-index byte lanes and shader uniform/sampler parameter offsets differ
+between platform declarations. Scene header field zero is a scene-name relative
+pointer. Mesh part +20 is vertex count; it must not be treated as a bounds field.
+
+These findings came from static inspection and structural conversion audits.
+They do not establish visual parity, gameplay correctness or a supported general
+SCNE writer. Live poll-rank ownership remains unresolved. The mod-specific
+implementation, provider, artwork and conversion packaging are outside this PR.
+
+## Performance constraints for future adapters
+
+Read native live fields rather than polling files during drawing. Retain managed
+strings and update them on value changes. Cache native width measurements. Bind
+state to the main scene owner rather than allowing auxiliary scene lookups to
+change an existing owner's layout. These constraints follow the inspected
+ownership and drawing paths; no comparative frame-time benchmark is claimed.
 New labels render alongside the normal home-score draw and use native font
 measurement for school-name width fitting. Three native marker positions
 recover the scene transform independently of score-font size. Managed strings
