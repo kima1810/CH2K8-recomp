@@ -47,6 +47,25 @@ def test_append_alternate_and_preserve_native_header(tmp_path, name):
     assert second.read_bytes() == changed
 
 
+@pytest.mark.parametrize('shape', [None, 0, 4])
+def test_alternate_neckline_preserves_home_characteristics(tmp_path, shape):
+    payload, head, request, output, layout = inputs(tmp_path)
+    home_word = (3 << 27) | 0x125
+    data = bytearray(payload.read_bytes())
+    struct.pack_into('>I', data, 4 + layout['uniforms'] + 4, home_word)
+    payload.write_bytes(data)
+    route = dict(artwork=0, variant=2, required=True)
+    if shape is not None:
+        route['neck_shape'] = shape
+    request.write_text(json.dumps(dict(unlock_existing=True, alternates=[route])))
+    result = native('activate-roster-uniforms', payload, head, request, output)
+    assert result.returncode == 0, result.stderr
+    changed = output.read_bytes()
+    at = 0x74 + struct.unpack_from('>i', changed, 4 + 0x74)[0] - 1
+    assert struct.unpack_from('>I', changed, 4 + at + 4)[0] == home_word
+    assert struct.unpack_from('>I', changed, 4 + at + 12)[0] == (((3 if shape is None else shape) << 27) | 0x125)
+
+
 @pytest.mark.parametrize('mutation', ['unmapped', 'conflict', 'header', 'dormant', 'home'])
 def test_unsafe_activation_rejects_without_touching_input(tmp_path, mutation):
     payload, head, request, output, layout = inputs(tmp_path)

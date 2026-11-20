@@ -34,7 +34,11 @@ inline J validate_roster_save(const fs::path& payload, const fs::path& header, b
             "Native roster header/payload filename differs or is unsafe");
   } else require(std::string(reinterpret_cast<const char*>(h.data()+264), 11) == std::string("Roster.ROS\0", 11),
           "Only the observed Roster.ROS package is supported");
-  require((named || (be(h,308)==0 && be(h,312)==0)) && be(h, 316) == 0x54540818,
+  // The SDK's naturally aligned aggregate stores its XUID at 312
+  // and title at 320. Older exports used the packed offsets 308/316.
+  const auto title_offset=be(h,320)==0x54540818 ? 320 : 316;
+  require((named || (be(h,title_offset-8)==0 && be(h,title_offset-4)==0)) &&
+              be(h,title_offset)==0x54540818,
           "Roster header must be profile-neutral and title 54540818");
   require(save.size() >= 4 + 0xb0 && be(save, 0) == save.size()-4,
           "Native roster length wrapper differs");
@@ -122,7 +126,14 @@ inline J activate_roster_uniforms(const fs::path& payload,const fs::path& header
     changes.push_back(J{{"owner",(a>>22)&1023},{"artwork",(a>>12)&1023},{"variant",(a>>8)&7},{"unlock_only",true}});a&=~127u;
   }
   for(const auto& item:plan){
-    require(item.is_object() && item.size()==(item.contains("required")?3:2) && item.contains("artwork") && item.contains("variant"),"Unknown activation field");
+    require(item.is_object() && item.size()==2+item.contains("required")+item.contains("neck_shape") &&
+            item.contains("artwork") && item.contains("variant"),"Unknown activation field");
+    std::optional<uint32_t> neck_shape;
+    if(item.contains("neck_shape")){
+      auto shape=num(item["neck_shape"]);
+      require(shape<=4,"Invalid Xbox alternate neckline");
+      neck_shape=uint32_t(shape);
+    }
     bool required=item.value("required",true);
     auto art=num(item["artwork"]),variant=num(item["variant"]);
     require(art<=1023 && variant>=2 && variant<=4 && requested.insert({art,variant}).second,"Invalid/duplicate alternate activation");
@@ -141,13 +152,18 @@ inline J activate_roster_uniforms(const fs::path& payload,const fs::path& header
     if(existing!=rows.end()){
       if(((existing->first>>12)&1023)!=art && !required)continue;
       require(((existing->first>>12)&1023)==art,"Existing alternate routes to different artwork; refusing overwrite");
-      if((existing->first&127)==0)continue;
+      auto word1=existing->second;
+      if(neck_shape)word1=(word1&~(7u<<27))|(*neck_shape<<27);
+      if((existing->first&127)==0 && word1==existing->second)continue;
       existing->first&=~127u;
+      existing->second=word1;
     }else{
       if(home==rows.end() && !required)continue;
       require(home!=rows.end() && rows.size()<8192,"Missing Home template or uniform table full");
       auto a=(home->first&~((1023u<<12)|(7u<<8)|127u))|(art<<12)|(variant<<8);
-      rows.emplace_back(a,home->second);
+      auto word1=home->second;
+      if(neck_shape)word1=(word1&~(7u<<27))|(*neck_shape<<27);
+      rows.emplace_back(a,word1);
     }
     changes.push_back(J{{"owner",owner},{"artwork",art},{"variant",variant}});
   }

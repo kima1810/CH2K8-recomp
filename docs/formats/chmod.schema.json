@@ -200,6 +200,11 @@
             "type": "string",
             "pattern": "^(?:sel)?u[haxyz][0-9]{3,4}\\.iff$"
           },
+          "neck_shape": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          },
           "template_hash": {
             "$ref": "#/$defs/u32"
           },
