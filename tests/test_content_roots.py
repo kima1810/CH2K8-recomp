@@ -42,8 +42,12 @@ def test_content_patch_rejects_unknown_layout_without_writing(tmp_path):
 def test_pinned_content_patch_is_idempotent(tmp_path):
     source=ROOT/'work/third_party/rexglue-vulkan'
     if not source.is_dir():pytest.skip('Local pinned SDK required')
-    relative=Path('src/kernel/xam/xam_content_aggregate.cpp');path=tmp_path/relative;path.parent.mkdir(parents=True)
-    original=subprocess.check_output(['git','-C',str(source),'show','HEAD:'+relative.as_posix()])
-    path.write_bytes(original);(tmp_path/'include/rex/system/xam').mkdir(parents=True)
-    prepare_content(tmp_path);first=path.read_bytes();prepare_content(tmp_path);assert path.read_bytes()==first
-    text=first.decode();assert 'enumeration_roots.First(xuid, title_id' in text and 'enumeration_roots.First(0, title_id' in text
+    paths={}
+    for name in ('xam_content_aggregate.cpp','xam_content.cpp'):
+        relative=Path('src/kernel/xam')/name;path=tmp_path/relative;path.parent.mkdir(parents=True,exist_ok=True)
+        path.write_bytes(subprocess.check_output(['git','-C',str(source),'show','HEAD:'+relative.as_posix()]));paths[name]=path
+    (tmp_path/'include/rex/system/xam').mkdir(parents=True)
+    prepare_content(tmp_path);first={n:p.read_bytes() for n,p in paths.items()}
+    prepare_content(tmp_path);assert first=={n:p.read_bytes() for n,p in paths.items()}
+    text=first['xam_content_aggregate.cpp'].decode();assert 'enumeration_roots.First(xuid, title_id' in text and 'enumeration_roots.First(0, title_id' in text
+    assert first['xam_content.cpp'].decode().count('user_index == 0xFE ? 0 :')==1
