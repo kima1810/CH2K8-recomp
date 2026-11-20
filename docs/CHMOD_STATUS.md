@@ -1,4 +1,8 @@
-# CHMOD current implementation status
+# CHMOD implementation status
+
+For the current folder workflow, collections and feature limits, see the
+[modding guide](MODDING.md) and [recent research index](research/zmo-beta-research.md).
+The entries below retain their original task-specific verification status.
 
 Current profile: schema1, API **1.3.0**, Windows x64, supported USA Xbox XEX.
 Existing DDS/cloth overlays, uniform registration/automatic roster linking,
@@ -21,8 +25,8 @@ this task. Static Ghidra evidence was saved; it is not gameplay or performance
 verification. Current ABI2 capabilities are **Researched**, implemented/compiled,
 not structurally validated by tests and not In-game verified.
 
-[API1.3 spec](formats/chmod-1.3.md) · [Evidence](findings/2026-11-08-extension-framework.md)
-· [Remote acceptance](../sdk/ACCEPTANCE.md). Native DLLs remain unsandboxed;
+[API1.3 spec](formats/chmod-1.3.md) Â· [Evidence](findings/2026-11-08-extension-framework.md)
+Â· [Remote acceptance](../sdk/ACCEPTANCE.md). Native DLLs remain unsandboxed;
 no hot unload, arbitrary guest-memory API or existing Legacy migration is provided.
 
 Launcher update follow-up: **Update from GitHub** downloads/verifies compatible

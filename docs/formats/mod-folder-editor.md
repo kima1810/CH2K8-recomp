@@ -38,14 +38,16 @@ editor projects, source PSDs, OBJ files, previews, backups and private metadata
 outside the exported folder. Store user enablement and priority in the
 launcher, separately from package metadata.
 
-Import the folder containing `mod.json`, or use either supported discovery
-layout under `mods/`: a direct child with `mod.json` or a direct child containing
-version folders with `mod.json`. Standard installed layouts are
-`mods/<id>/mod.json`, `mods/<id>-<version>/mod.json`, and
-`mods/<id>/<version>/mod.json`. The manifest ID and version are authoritative.
-Publish changes as a new version. Avoid both discovery layouts for the same ID
-and version because selection requires exactly one match. The launcher still
-imports legacy `.chmod` ZIPs, whose entries start at the same folder root.
+Import the folder containing `mod.json`, or import a collection of packages nested
+under category and version directories. Discovery walks category folders recursively
+and stops at each package root. A package cannot contain another discoverable
+package. Hidden directories are skipped and discovery is bounded to 8,192 folders.
+For example, `mods/Presentation Mods/Presentation Overhaul V1.0/ESPN/mod.json`
+is a valid installed hierarchy. Category names can contain spaces. Payload paths
+inside a package follow the stricter rules below. The manifest ID and version are
+authoritative. Publish changes as a new version and avoid installing the same
+ID/version twice. The launcher still imports legacy `.chmod` ZIPs whose entries
+start at the package root. See [nested collections](#nested-collections).
 
 ### File and JSON rules
 
