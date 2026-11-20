@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CHRB2K Launcher</title>
+<link rel="stylesheet" href="launcher.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ===== Sidebar ===== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="assets/RSN.png" alt="Reborn Sports Network">
+      <div>
+        <div class="brand-name">Reborn Sports</div>
+        <div class="brand-sub">CHRB2K Launcher</div>
+      </div>
+    </div>
+
+    <nav class="nav" role="tablist" aria-label="Launcher sections">
+      <button class="nav-item" role="tab" aria-selected="true" data-tab="play">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M7 4l13 8-13 8z"/></svg>Play</button>
+      <button class="nav-item" role="tab" aria-selected="false" data-tab="mods">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 12l9-5M12 12v10M12 12L3 7"/></svg>Mods<span class="nav-count" id="navModCount">0</span></button>
+      <button class="nav-item" role="tab" aria-selected="false" data-tab="roster">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.2-5.5 6.5-5.5s5.9 1.9 6.5 5.5M16 4.8a3.5 3.5 0 010 6.4M18 14.8c2 .6 3.2 2.3 3.5 5.2"/></svg>Roster</button>
+      <button class="nav-item" role="tab" aria-selected="false" data-tab="legacies">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M8 4h8v5a4 4 0 01-8 0zM8 6H4v2a3 3 0 003 3M16 6h4v2a3 3 0 01-3 3M12 13v4M8 20h8"/></svg>Legacies</button>
+      <button class="nav-item" role="tab" aria-selected="false" data-tab="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>Settings</button>
+    </nav>
+
+    <div class="links" aria-label="Links">
+      <div class="links-title">Links</div>
+      <a class="link" data-open="discord" href="https://discord.gg/FhBHUdQ9h" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg>Discord</a>
+      <a class="link" data-open="recomp" href="https://github.com/kima1810/CH2K8-recomp" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6l-5 6 5 6M16 6l5 6-5 6"/></svg>Recomp repo</a>
+      <a class="link" data-open="studio" href="https://github.com/ZMO34/CHoops-Extractor-Reborn-Recomp" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M14.5 5.5a4 4 0 00-5 5L3 17l4 4 6.5-6.5a4 4 0 005-5l-3 3-3-1-1-3z"/></svg>Recomp Studio</a>
+    </div>
+
+    <div class="sidebar-foot">
+      <div class="rsn"><img src="assets/RSN.png" alt=""> reborn sports network</div>
+      <div id="demoNote"></div>
+    </div>
+  </aside>
+
+  <!-- ===== Main ===== -->
+  <main class="main">
+
+    <!-- PLAY -->
+    <section class="panel active" id="panel-play" aria-label="Play">
+      <div class="hero">
+        <div>
+          <img class="hero-logo" src="assets/CHRB2K.png" alt="CHRB2K">
+          <div class="hero-tags"><span class="chip chip-gold">Xbox 360 recomp</span><span class="chip">Basketball</span><span class="chip">PC</span></div>
+          <h1>College Hoops <em>2K8</em></h1>
+          <div class="based">Reborn edition &middot; <span id="heroModLine">0 mods enabled</span></div>
+          <div class="hero-actions">
+            <button class="btn btn-primary" id="btnPlay">Play</button>
+            <button class="btn" id="btnPlayVanilla" title="Removes any applied mods, then starts the game with stock files">Launch without mods</button>
+            <button class="btn" data-goto="settings">Settings</button>
+          </div>
+          <div class="banner" id="jobBanner" role="status" hidden></div>
+        </div>
+
+        <div class="card" aria-label="Ready to play">
+          <h2 class="section" id="readyTitle">Ready to play</h2>
+          <div class="status-row"><span class="k">Game files</span><span id="stFiles"></span></div>
+          <div class="status-row"><span class="k">Game build (ch2k8.exe)</span><span id="stExe"></span></div>
+          <div class="status-row"><span class="k">Renderer</span><span class="v" id="stRenderer"></span></div>
+          <div class="status-row"><span class="k">Mods</span><span class="v" id="statMods">0 enabled</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MODS -->
+    <section class="panel" id="panel-mods" aria-label="Mods">
+      <h1 class="page-title">Mods</h1>
+      <p class="page-lede">Turn mods on or off, then press Play. Enabled mods are applied to the game data folder right before the game starts. <b>Launch without mods</b> restores the stock files first.</p>
+
+      <div class="subtabs" role="tablist">
+        <button class="subtab" role="tab" aria-selected="true">Installed</button>
+        <button class="subtab" role="tab" aria-selected="false" disabled title="Later">Discover</button>
+      </div>
+
+      <div class="mods-layout">
+        <div>
+          <div class="toolbar">
+            <button class="btn" id="btnFolder">Open mods folder</button>
+            <button class="btn" id="btnRefresh">Refresh</button>
+            <span class="spacer"></span>
+            <button class="btn" id="btnAllOff">Disable all</button>
+          </div>
+          <div class="table-wrap">
+            <table class="mods">
+              <thead><tr><th style="width:56px">On</th><th>Name</th><th>Type</th><th>Status</th></tr></thead>
+              <tbody id="modRows"></tbody>
+            </table>
+          </div>
+          <div class="hint" id="modsDirNote"></div>
+          <div class="hint">To add a mod, copy its folder into the mods folder and press Refresh. A mod needs a <code>build_mod.py</code> with <code>apply</code> and <code>revert</code> to be loadable.</div>
+        </div>
+
+        <aside class="card" id="modDetail" aria-live="polite"></aside>
+      </div>
+    </section>
+
+    <!-- ROSTER (saves + rosters combined) -->
+    <section class="panel" id="panel-roster" aria-label="Roster">
+      <h1 class="page-title">Roster</h1>
+      <p class="page-lede">A saved roster (<code>Roster.ROS</code>) overrides the roster in the game files, so a roster mod will not show up while one exists. Reset renames it to a <code>.bak</code> file; nothing is deleted.</p>
+      <div class="card">
+        <h2 class="section">Saved roster</h2>
+        <div id="rosterList"></div>
+        <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+          <button class="btn btn-danger" id="btnRosterReset">Reset saved roster</button>
+          <button class="btn" data-open-folder="saves">Open save folder</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- LEGACIES -->
+    <section class="panel" id="panel-legacies" aria-label="Legacies">
+      <h1 class="page-title">Legacies</h1>
+      <p class="page-lede">Your saved legacy files live in the save folder.</p>
+      <div class="card empty">Legacy browsing comes later.<br><button class="btn" style="margin-top:12px" data-open-folder="saves">Open save folder</button></div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="panel" id="panel-settings" aria-label="Settings">
+      <h1 class="page-title">Settings</h1>
+      <p class="page-lede">Saved to the same file as the classic launcher, so both agree. Changes apply the next time you press Play.</p>
+      <div class="form-grid">
+        <div class="card">
+          <h2 class="section">Display</h2>
+          <div class="field" style="margin-bottom:16px"><label for="setRenderer">Renderer</label>
+            <select class="input" id="setRenderer"><option value="d3d12">Direct3D 12</option><option value="vulkan">Vulkan</option></select></div>
+          <div class="field" style="margin-bottom:16px"><label for="setPath">Render mode</label>
+            <select class="input" id="setPath"><option value="auto">Auto</option><option value="native">Native</option><option value="accurate">Accurate</option></select></div>
+          <div class="field" style="margin-bottom:16px"><label for="setRes">Resolution</label><select class="input" id="setRes"></select></div>
+          <div class="field" style="margin-bottom:16px"><label for="setHz">Refresh rate (Hz)</label><input class="input" id="setHz" type="number" min="24" max="240"></div>
+          <div class="field"><label for="setMode">Window mode</label>
+            <select class="input" id="setMode"><option value="windowed">Windowed</option><option value="borderless">Borderless fullscreen</option><option value="exclusive">Exclusive fullscreen</option></select></div>
+        </div>
+        <div class="card">
+          <h2 class="section">Game data</h2>
+          <div class="field"><label for="setData">Folder containing default.xex</label>
+            <input class="input mono" id="setData" spellcheck="false">
+            <small id="setDataNote"></small></div>
+          <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+            <button class="btn" id="btnSaveData">Save folder</button>
+            <button class="btn" id="btnDefaultData">Use default</button>
+            <button class="btn" data-open-folder="logs">Open logs</button>
+          </div>
+          <div class="banner" id="settingsBanner" hidden></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===== Footer ===== -->
+  <footer class="footbar">
+    <span><kbd>1</kbd>-<kbd>5</kbd> Sections</span>
+    <span><kbd>Enter</kbd> Play</span>
+    <div class="right" id="footMsg">Ready</div>
+  </footer>
+</div>
+
+<script>
+const TOKEN = '__LAUNCHER_TOKEN__';
+const DEMO = TOKEN.startsWith('__');              // opened as a plain file: use mock data
+const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+const esc = t => String(t ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const say = t => { $('#footMsg').textContent = t; };
+let S = null, selected = null, pollTimer = null;
+
+/* ---------- API (real host, or in-page demo) ---------- */
+const demo = {
+  settings:{renderer:'d3d12',render_path:'auto',resolution:'1280x720',refresh_rate:60,window_mode:'windowed',game_data:''},
+  game_data_effective:'(demo) CH2K8 Decomp\\game', game_data_is_default:true,
+  setup:{game_data_ok:true,exe_ok:true,exe_path:'ch2k8.exe'},
+  mods:{dir:'(demo) mods',items:[
+    {id:'stojakovic',name:'Andrej Stojakovic test',description:'Test of custom player heads. Replaces Chris Hicks (#2, Illinois).',type:'Game edit',loadable:true,enabled:false,applied:false},
+    {id:'sample',name:'Sample mod (example)',description:'Placeholder row.',type:'No build script',loadable:false,enabled:false,applied:false}]},
+  roster:{files:[],userdata:'(demo) port\\userdata'},
+  job:{state:'idle',message:'',steps:[],current:-1}, options:{resolutions:['1280x720','1600x900','1920x1080','2560x1440','3840x2160']}
+};
+async function api(method, path, body) {
+  if (DEMO) {
+    if (path === '/api/settings') Object.assign(demo.settings, body);
+    if (path === '/api/mods/toggle') demo.mods.items.find(m => m.id === body.id).enabled = body.enabled;
+    if (path === '/api/mods/disable_all') demo.mods.items.forEach(m => m.enabled = false);
+    if (path === '/api/play') demo.job = {state:'ok',message:'Demo only: the real launcher would start the game now.',steps:[],current:0};
+    return JSON.parse(JSON.stringify(demo));
+  }
+  const res = await fetch(path, {method, headers: {'X-Token': TOKEN, 'Content-Type': 'application/json'}, body: body ? JSON.stringify(body) : undefined});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || ('Request failed: ' + res.status));
+  return data;
+}
+async function act(method, path, body, okMsg) {
+  try { const r = await api(method, path, body); if (r.settings) S = r; render(); if (okMsg) say(okMsg); return r; }
+  catch (e) { say(e.message.split('\n')[0]); showBanner('#settingsBanner', e.message, 'err'); showBanner('#jobBanner', e.message, 'err'); }
+}
+function showBanner(sel, text, kind) {
+  const b = $(sel); if (!b) return; b.hidden = !text; b.textContent = text || ''; b.className = 'banner' + (kind ? ' ' + kind : '');
+}
+
+/* ---------- Render ---------- */
+const dot = ok => ok ? '<span class="dot">&#10003;</span>' : '<span class="dot warn">!</span>';
+function enabledCount(){ return S.mods.items.filter(m => m.enabled && m.loadable).length; }
+function render() {
+  const n = enabledCount(), ready = S.setup.game_data_ok && S.setup.exe_ok, busy = S.job.state === 'running';
+  $('#navModCount').textContent = S.mods.items.length;
+  $('#heroModLine').textContent = n + (n === 1 ? ' mod enabled' : ' mods enabled');
+  $('#statMods').textContent = n + ' enabled';
+  $('#stFiles').innerHTML = dot(S.setup.game_data_ok);
+  $('#stExe').innerHTML = dot(S.setup.exe_ok);
+  $('#stRenderer').textContent = S.settings.renderer === 'vulkan' ? 'Vulkan' : 'Direct3D 12';
+  $('#readyTitle').textContent = ready ? 'Ready to play' : 'Setup needed';
+  $('#btnPlay').disabled = $('#btnPlayVanilla').disabled = !ready || busy;
+  $('#demoNote').textContent = DEMO ? 'Demo data (page opened as a file)' : '';
+  if (!ready) showBanner('#jobBanner', !S.setup.game_data_ok ? 'No default.xex in ' + S.game_data_effective + '. Set the game data folder in Settings.' : 'Game build not found: ' + S.setup.exe_path, 'warn');
+  else if (S.job.state === 'error') showBanner('#jobBanner', S.job.message, 'err');
+  else if (busy || S.job.state === 'ok') showBanner('#jobBanner', S.job.message, S.job.state === 'ok' ? 'ok' : '');
+  else showBanner('#jobBanner', '');
+  renderMods(); renderRoster(); renderSettings();
+  if (busy && !pollTimer) pollTimer = setInterval(poll, 800);
+  if (!busy && pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+function renderMods() {
+  const items = S.mods.items;
+  if (!selected || !items.some(m => m.id === selected)) selected = items.length ? items[0].id : null;
+  $('#modRows').innerHTML = items.length ? items.map(m => `
+    <tr data-id="${esc(m.id)}" aria-selected="${m.id === selected}">
+      <td><label class="switch"><input type="checkbox" ${m.enabled ? 'checked' : ''} ${m.loadable ? '' : 'disabled'} aria-label="Enable ${esc(m.name)}"><span></span></label></td>
+      <td><div class="mod-name">${esc(m.name)}</div></td><td>${esc(m.type)}</td>
+      <td>${m.applied ? '<span class="chip chip-ok">Applied</span>' : '<span class="chip">Not applied</span>'}</td>
+    </tr>`).join('') : '<tr><td colspan="4" class="empty">No mods found.</td></tr>';
+  $('#modsDirNote').textContent = S.mods.dir ? 'Mods folder: ' + S.mods.dir : 'No mods folder found. Create a "mods" folder next to the launcher folder.';
+  const m = items.find(x => x.id === selected);
+  $('#modDetail').innerHTML = m ? `
+    <h2 class="section">Selected mod</h2>
+    <div class="mod-name" style="font-size:17px">${esc(m.name)}</div>
+    <span class="chip ${m.enabled ? 'chip-ok' : ''}" style="margin-top:8px">${m.enabled ? 'Enabled' : 'Disabled'}</span>
+    <dl class="kv"><dt>Folder</dt><dd>${esc(m.id)}</dd><dt>Type</dt><dd>${esc(m.type)}</dd><dt>Applied</dt><dd>${m.applied ? 'Yes' : 'No'}</dd></dl>
+    <p style="color:var(--text-muted);margin:0 0 16px">${esc(m.description) || 'No description.'}</p>
+    <button class="btn" id="dToggle" ${m.loadable ? '' : 'disabled'}>${m.enabled ? 'Disable' : 'Enable'}</button>`
+    : '<div class="empty">Select a mod to see details.</div>';
+  const t = $('#dToggle'); if (t) t.onclick = () => toggle(m.id, !m.enabled);
+}
+function renderRoster() {
+  const f = S.roster.files;
+  $('#rosterList').innerHTML = f.length
+    ? f.map(p => `<div class="status-row"><span class="k mono" style="font-family:var(--font-mono);font-size:12px;word-break:break-all">${esc(p)}</span><span class="chip chip-warn">Overrides game roster</span></div>`).join('')
+    : '<div class="status-row"><span class="k">No saved roster in the save folder</span><span class="chip chip-ok">Game roster in use</span></div>';
+  $('#btnRosterReset').disabled = !f.length;
+}
+function renderSettings() {
+  const s = S.settings, set = (id, v) => { const el = $(id); if (document.activeElement !== el) el.value = v; };
+  if (!$('#setRes').options.length) $('#setRes').innerHTML = S.options.resolutions.map(r => `<option>${r}</option>`).join('');
+  set('#setRenderer', s.renderer); set('#setPath', s.render_path); set('#setRes', s.resolution);
+  set('#setHz', s.refresh_rate); set('#setMode', s.window_mode); set('#setData', s.game_data || S.game_data_effective);
+  $('#setDataNote').textContent = S.game_data_is_default ? 'Using the default location.' : 'Custom folder.';
+}
+
+/* ---------- Actions ---------- */
+function toggle(id, on) { act('POST', '/api/mods/toggle', {id, enabled: on}, (on ? 'Enabled ' : 'Disabled ') + id + ' - applies when you press Play'); }
+$('#modRows').addEventListener('click', e => {
+  const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+  const sw = e.target.closest('.switch');
+  if (sw) { toggle(tr.dataset.id, sw.querySelector('input').checked); return; }
+  selected = tr.dataset.id; renderMods();
+});
+$('#btnAllOff').onclick = () => act('POST', '/api/mods/disable_all', {}, 'All mods disabled');
+$('#btnRefresh').onclick = async () => { await refresh(); say('Rescanned mods folder'); };
+$('#btnFolder').onclick = () => act('POST', '/api/open', {target: 'mods'});
+$$('[data-open-folder]').forEach(b => b.onclick = () => act('POST', '/api/open', {target: b.dataset.openFolder}));
+$$('a[data-open]').forEach(a => a.addEventListener('click', e => { if (!DEMO) { e.preventDefault(); act('POST', '/api/open', {target: a.dataset.open}); } }));
+$('#btnRosterReset').onclick = async () => {
+  if (!confirm('Rename the saved roster to a .bak file? The game will use its own roster next time.')) return;
+  const r = await act('POST', '/api/roster/reset', {}); if (r) say('Moved ' + (r.moved ?? 0) + ' saved roster file(s) to .bak');
+};
+function play(withMods) {
+  showBanner('#jobBanner', ''); S.job = {state: 'running', message: 'Starting...', steps: [], current: 0}; render();
+  act('POST', '/api/play', {with_mods: withMods});
+}
+$('#btnPlay').onclick = () => play(true);
+$('#btnPlayVanilla').onclick = () => play(false);
+$('#setRenderer').onchange = e => act('POST', '/api/settings', {renderer: e.target.value}, 'Saved');
+$('#setPath').onchange = e => act('POST', '/api/settings', {render_path: e.target.value}, 'Saved');
+$('#setRes').onchange = e => act('POST', '/api/settings', {resolution: e.target.value}, 'Saved');
+$('#setMode').onchange = e => act('POST', '/api/settings', {window_mode: e.target.value}, 'Saved');
+$('#setHz').onchange = e => act('POST', '/api/settings', {refresh_rate: parseInt(e.target.value, 10)}, 'Saved');
+$('#btnSaveData').onclick = () => act('POST', '/api/settings', {game_data: $('#setData').value}, 'Game data folder saved');
+$('#btnDefaultData').onclick = () => act('POST', '/api/settings', {game_data: ''}, 'Using the default game data folder');
+
+async function refresh() { try { S = await api('GET', '/api/state'); render(); } catch (e) { say(e.message); } }
+async function poll() { await refresh(); if (S && S.job.state !== 'running') say(S.job.state === 'ok' ? 'Game started' : 'Launch failed - see the Play tab'); }
+
+/* ---------- Tabs ---------- */
+const order = ['play', 'mods', 'roster', 'legacies', 'settings'];
+function go(tab) {
+  $$('.nav-item').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === tab));
+  $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
+}
+$$('.nav-item').forEach(b => b.onclick = () => go(b.dataset.tab));
+$$('[data-goto]').forEach(b => b.onclick = () => go(b.dataset.goto));
+document.addEventListener('keydown', e => {
+  if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+  const i = parseInt(e.key, 10); if (i >= 1 && i <= 5) go(order[i - 1]);
+  if (e.key === 'Enter' && e.target.tagName !== 'BUTTON' && !$('#btnPlay').disabled) $('#btnPlay').click();
+});
+
+refresh();
+if (!DEMO) setInterval(() => fetch('/api/ping', {headers: {'X-Token': TOKEN}}).catch(() => {}), 4000);
+</script>
+</body>
+</html>
