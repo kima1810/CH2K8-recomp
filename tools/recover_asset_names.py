@@ -18,7 +18,25 @@ def crc(name):
 
 
 def bank_candidates():
-    yield from ("eyeball.iff", "lights.iff")
+    yield from ("eyeball.iff", "lights.iff", "ao_tri.iff", "ao_u.iff",
+                "ao_v.iff", "ao_vtri.iff", "ao_wishbone.iff", "baseball.iff",
+                "beachball.iff", "coachmode.iff", "createpholder.iff",
+                "crowdloops_inside_large.iff", "crowdloops_inside_small.iff",
+                "cshoemodel.iff", "darts.iff", "drillschallenge.iff",
+                "drillschallenge_attackbasket.iff",
+                "drillschallenge_denyposition.iff",
+                "drillschallenge_dribblecourse.iff",
+                "drillschallenge_linecourse.iff",
+                "drillschallenge_shooting.iff", "eightball.iff", "english.iff",
+                "golfball.iff", "highlightcreate.iff",
+                "loading_drillschallenge.iff", "loading_highlight.iff",
+                "ncaaball.iff", "performancepanel.iff", "pontiac_skin.iff",
+                "ref1.iff", "ref2.iff", "rockball.iff",
+                "sideline_items_crowd01.iff", "sideline_items_crowd01a.iff",
+                "sideline_items_crowd01b.iff", "sideline_items_crowd01c.iff",
+                "sideline_items_crowd02.iff", "sideline_items_crowd03.iff",
+                "skin_english.iff", "studio_sfch2nite.iff",
+                "studio_sfsunday.iff", "tennisball.iff", "vcball.iff")
     for side in ("ua", "uh", "ux", "uy", "uz"):
         for selection in ("", "sel"):
             for number in range(1024):
