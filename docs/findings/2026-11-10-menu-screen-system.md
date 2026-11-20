@@ -36,7 +36,7 @@ layout (an LAYT + SCNE pair of the same name in an IFF bank).
 
 | Offset | Meaning (verified on `CoachMenu_CoachCarouselMenu`, `.rdata:8213D478`) |
 | --- | --- |
-| `+0x00` | `.data` runtime block |
+| `+0x00` | -> the screen's short-name string id ("Polls", "Coach Carousel", "Create-a-Recruit"), stored at the end of the hint block: `{button, glyph, label}*, 0, 1, 1, title, description, short name` |
 | `+0x04` | name (UTF-16) |
 | `+0x08` | event map: `{event id, -> list of {1, callback}}`, zero-terminated |
 | `+0x0C` | handler: `847DC790` list (314 screens), `847DC348` plain (225), `847DCC78` SlideOnNav (71), `847DC530` option items (32) |
@@ -56,7 +56,8 @@ layout (an LAYT + SCNE pair of the same name in an IFF bank).
   `0x80` x56, ...): bit 31 = nav anchor (event 1 records the stack depth in
   menu `+0xE8`; 2K Nav jumps through `sub_847E3558` pop back to it first);
   bit 27 = play the menu-select cue on event `0xB` if the event map handles it;
-  bit 28 = the same for events `0xC`/`0xD`.
+  bit 28 = the same for events `0xC`/`0xD`. (On a list screen A was seen to
+  arrive as `0xC`, not `0xB`: see Lists below.)
 - [GUESS] Bit 29 gates a per-controller state lookup (`sub_84760C88`) during
   event 6 (input): most likely "only the owning pad drives this screen".
 - [CONFIRMED] Instance `+0x44C` runtime flags: `0x2000000` animated transition
@@ -98,16 +99,27 @@ layout (an LAYT + SCNE pair of the same name in an IFF bank).
   `count()` binding, `+0x0C` -> `item(row)` binding, `+0x24..` column records,
   zero-terminated. Carousel: `count = sub_84BCAC30()` (end minus start of a
   static array), `item(i) = sub_84BCAC48(i)` (array at `85B813C8`, stride 0x14).
-- [CONFIRMED] Column record: `+0x00` flags | width (px), `+0x34` cell callback
-  `(out_text, row_item)` returning a string id or formatted text (e.g.
-  `sub_84C3EF80`: row -> coach name), header string after it.
+- [CONFIRMED] Column record (0x34 bytes): `+0x00` flags | width (px), `+0x04` ->
+  cell binding `{fn, kinds}`, `+0x20` = 1, `+0x28` / `+0x2C` -> short / long
+  header bindings `{847EF558, 0x10000, header string id}` (0 if none). The cell
+  function returns a string id or formatted text; kinds `0x10003` pass the row
+  index, `0x1000A` the row item (carousel first column: `sub_84C3F1E8`, kinds
+  `0x1000A`, both header bindings set).
+  `UnlockablesMenu_UserStats` key/value pair: `0x00100172` (370 px) and
+  `0x80100078` (120 px).
 - [CONFIRMED] `sub_847EC3A8(panel)` refreshes a panel (re-runs count, clamps the
   selection, relays out). A list needs no row array in game memory: it supplies
   count/item/cell functions, and row items may be plain indices.
-- [CONFIRMED] Focus and selection are engine-owned. The list handler maps pad
-  events `0xC`-`0x11` (move/page) and `0x13`-`0x16` (shoulders) to the list
-  widget (`847EE9F8`, `847EF0C0`, ...); `84C3AD90` reads the selection. Button
-  events (`0xA`, `0xB`, `0xC`, `0x12`, ...) reach the screen's event map. Menu
+- [CONFIRMED] Focus and selection are engine-owned: the list widget
+  (`847EE9F8`, `847EF0C0`, ...) moves the selection and `84C3AD90` reads it.
+- [CONFIRMED, runtime] On a list-handler screen (`847DC790`, flags
+  `0xA8000000`, a copy of `RecruitCreateMenu`), a logged dispatcher showed A
+  reach the event map as event `0xC` (repeating while held) and d-pad up/down
+  as `0x13`/`0x14`. Event `0xB` was never dispatched to it, although flag bit 27
+  is set. On the plain `TitlePage_Menu` (flags `0x88000000`), Start arrived as
+  `0xB`.
+- [LIKELY] Every list-handler screen behaves the same, so a list screen that
+  wants A must map `0xC`. Only the one screen above was logged. Menu
   sounds come from `sub_847DD140`. Pop-ups: `sub_847CDD88(menu, {string id + args}, -1)`.
 
 ## Non-list screens: layout-node bindings
@@ -160,8 +172,12 @@ layout (an LAYT + SCNE pair of the same name in an IFF bank).
   increment/decrement cue and swap screens with `sub_847E3418(menu,
   table[i].descriptor)`. Screens without a strip receive events `0x10`/`0x11`.
   The header shows the tab label and page count (`sub_847DA920`, `sub_847E6A00`).
-- [LIKELY] The physical page button comes from a runtime-filled mask table
-  (`8572A61C..8572A66C`, read only by `sub_847DB168`, zero in the image).
+- [CONFIRMED, runtime] On a three-page screen with a page strip, RB flipped to
+  the next page and LB to the previous one, both wrapping (last -> first,
+  first -> last); LT, RT and d-pad left/right did not flip. On the stock
+  Conference Card, LB/RB also flip pages (LT/RT change the conference). The button assignment comes from a runtime-filled
+  mask table (`8572A61C..8572A66C`, read only by `sub_847DB168`, zero in the
+  image).
 
 ## Host callbacks for new screens
 
@@ -174,6 +190,5 @@ layout (an LAYT + SCNE pair of the same name in an IFF bank).
 
 ## Limits
 
-Static except where marked. Descriptor `+0x44`, the `.data` runtime block and
-flag bit 29 are not fully named. How the row-list widget lays out more than
-four panels, and the exact page-flip button, were not traced.
+Static except where marked. Descriptor `+0x44` and flag bit 29 are not fully
+named. How the row-list widget lays out more than four panels was not traced.
