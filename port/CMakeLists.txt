@@ -87,7 +87,7 @@ set(CH2K8_SOURCES
 )
 
 if(WIN32)
-    list(APPEND CH2K8_SOURCES src/mod_extensions.cpp src/mod_framework.cpp src/mod_presentation.cpp src/mod_hook_inventory.inc)
+    list(APPEND CH2K8_SOURCES src/mod_extensions.cpp src/mod_framework.cpp src/mod_presentation.cpp src/mod_scorebug_elements.cpp src/mod_hook_inventory.inc)
     add_executable(ch2k8 WIN32 ${CH2K8_SOURCES} src/crash_report.cpp)
     target_link_libraries(ch2k8 PRIVATE dbghelp bcrypt)
 else()

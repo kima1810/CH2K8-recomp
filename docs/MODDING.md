@@ -79,6 +79,18 @@ Court authoring belongs in Studio. Its export supplies the paired CPU/GPU
 components and manifest. The recomp validates and stages those components against
 the supported source layout. Ordinary DDS repainting retains original geometry
 and markings. No standalone court-building command is provided by this PR.
+For a full court, use **Build Court.cmd** or the installed native tool:
+
+```text
+ch2k8_tools build-full-floor GAME s###/artwork.dds MODS
+ch2k8_tools audit-full-floors GAME
+```
+
+Use the UGA artwork layout in a 2048 x 1024 BC1/DXT1 DDS with 12 mip levels.
+The builder preserves the supported stock lighting geometry while hiding the
+original decorative draws. Check the audit for supported layouts. Split or
+unrecognized courts require additional conversion. Ordinary DDS repainting keeps
+the original court geometry and markings.
 
 Uniform letters `h/a/x/y/z` mean Home, Away and Alternates 1/2/3. Pair each world
 bank with its `sel` selection bank. Artwork ID differs from team/roster owner ID.
@@ -118,6 +130,16 @@ supported on-court passing atlas. See [Button Style](../sdk/BUTTON_STYLE.md).
 Additional [scorebug hook research](findings/2026-11-19-scorebug-elements.md)
 records scene ownership, native live fields and rendering boundaries. It does not
 add a public scorebug capability or distribute a scorebug mod.
+ESPN/USA Sports scorebugs use a separate opt-in preview DLL and converted Xbox
+scenes. ESPN is the initial choice. A change takes effect on the next main match
+scene construction. This preview provider is separate from the public CHMOD ABI.
+See [conversion and live-element research](findings/2026-11-19-scorebug-elements.md)
+for tooling, native addresses and verification limits. Updated logo alpha,
+placement and live elements still need manual gameplay review. Live poll ranks
+remain unresolved. Do not package the preview as a generally supported hook API.
+
+Native mods currently target Windows x64. A DLL is executable code and is not
+portable to macOS by copying it. See the [Mac portability assessment](research/mac-portability.md).
 
 ## Author and verify
 
