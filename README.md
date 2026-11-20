@@ -46,3 +46,11 @@ The launcher now includes **Update from GitHub** and **Rollback update**.
 See [runtime update documentation](docs/RUNTIME_UPDATES.md) for safe installation,
 release requirements and verification limits. The currently published older beta
 cannot downgrade the local SDK runtime. Tests/game execution remain user-run.
+
+## Modding and research
+
+Start with the [folder modding guide](docs/MODDING.md) and
+[editor export contract](docs/formats/mod-folder-editor.md).
+The [recent ZMO research index](docs/research/zmo-beta-research.md) links the
+modloader, native-hook and performance findings, with
+remaining verification work recorded for each feature.

@@ -1,5 +1,6 @@
 #pragma once
 #include "folder.h"
+#include "scene_image.h"
 
 // Imports Studio's existing Xbox template layout, never a new IFF dialect.
 // Registration is deliberately limited to native roster-linked uniform names.
@@ -17,8 +18,9 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
           "Uniform registration requires direct Xbox assets");
   J entry; std::set<std::string> occupied_pixels;
   const auto target_hash=crc(name);
+  const bool replacing=target_hash==template_hash;
   for(const auto& e:catalog.at("entries")) {
-    require(num(e["hash"])!=target_hash,"Uniform bank identity already exists");
+    require(replacing || num(e["hash"])!=target_hash,"Uniform bank identity already exists");
     if(num(e["hash"])==template_hash){require(entry.is_null(),"Ambiguous uniform template hash");entry=e;}
     const auto layout=json(contained(root,e["folder"].get<std::string>()+"/asset.json"));
     for(const auto& t:layout.value("textures",J::array())) {
@@ -32,8 +34,10 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
   std::smatch source_match;auto source_name=utf8(source.filename());
   require(std::regex_match(source_name,source_match,std::regex("(sel)?u([haxyz])([0-9]{3,4})\\.iff")) &&
           source_match[1].matched==match[1].matched,"Uniform template must be an original matching world/selection bank");
+  require(!replacing || source_name==name,"Uniform replacement must use its own stock bank");
   auto layout=json(source_meta), supplied=json(bank/L"asset.json");
   bool legacy_layout = file_sha(source_meta) != template_layout_sha256;
+  require(!replacing || !legacy_layout,"Uniform replacement requires the current stock layout");
   require(!legacy_layout ||
               layout.value("legacy_layout_sha256", std::string()) == template_layout_sha256,
           "Uniform template metadata revision differs");
@@ -124,6 +128,21 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
       require(!found.empty(),"Missing template texture component");parts.push_back(found);
     }
     if(parts.empty() || parts.size()>2)continue;
+    const auto id=num(r["id"]);
+    // Case-sensitive resource CRCs for jersey_numbers and names.
+    if(parts.size()==2 && (id==0x3e0620f6 || id==0xf2334940) &&
+       is_indexed_texture(originals.at(parts[0]))) {
+      const auto& before=originals.at(parts[1]);
+      if(before!=payloads.at(parts[1])) {
+        require(component_owners.at(parts[1])==std::set<uint32_t>{0x5c369069},
+                "Uniform atlas shares a non-texture component owner");
+        const auto info=describe_indexed_texture(originals.at(parts[0]),before);
+        auto& permitted=writable.at(parts[1]);
+        std::fill_n(permitted.begin(),info.mip_end,true);
+        std::fill(permitted.begin()+info.palette,permitted.end(),true);
+      }
+      continue;
+    }
     Texture info{};Bytes dds;
     try{info=describe(originals.at(parts[0]),parts.size()==2?&originals.at(parts[1]):nullptr);
         dds=export_dds(payloads.at(parts[0]),parts.size()==2?&payloads.at(parts[1]):nullptr);}
@@ -144,7 +163,10 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
     textures.push_back(J{{"path",file},{"record",r["index"]},{"sha256",sha(dds)},
                           {"identity",pixel_hash},{"descriptor",tex_json(info)}});
     ids.push_back(pixel_key);
-    auto id=num(r["id"]);jersey|=id==crc("unifregion") || id==crc("unif");shorts|=id==crc("shortregion") || id==crc("short");
+    // Retail embedded names use case-sensitive CRCs. Keep the older
+    // uppercase identities accepted for existing source-bound templates.
+    jersey |= id==0xfe29ee06 || id==0x2f027d1b || id==crc("unifregion") || id==crc("unif");
+    shorts |= id==0x055fbdef || id==0x8f2890a2 || id==crc("shortregion") || id==crc("short");
   }
   require(!textures.empty(),"Uniform template has no supported native textures");
   require(match[1].matched || (jersey && shorts),"World uniform template lacks verified jersey/shorts artwork records");
@@ -158,8 +180,9 @@ inline J validate_uniform_bank(const fs::path& game, const fs::path& package,
     require(attributes!=INVALID_FILE_ATTRIBUTES && !(attributes&FILE_ATTRIBUTE_REPARSE_POINT),"Linked uniform package path");
     if(e.is_regular_file())require(allowed.contains(utf8(e.path().lexically_relative(bank))),"Undeclared uniform bank file");
   }
-  layout["identity"]=identity;layout["textures"]=textures;
-  return J{{"ready",true},{"name",name},{"hash",target_hash},{"artwork",artwork},
+  if(!replacing)layout["identity"]=identity;
+  layout["textures"]=textures;
+  return J{{"ready",true},{"replacing",replacing},{"name",name},{"hash",target_hash},{"artwork",artwork},
            {"selection",match[1].matched},{"variant",std::string("haxyz").find(match[2].str())},
            {"layout",layout},{"texture_identities",ids}};
 }

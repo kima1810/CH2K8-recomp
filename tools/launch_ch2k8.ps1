@@ -412,7 +412,7 @@ function Start-Ch2k8Unlocked {
     } elseif (Test-Path -LiteralPath (Join-Path $assetRoot 'assets.json')) {
         Invoke-Ch2k8Preparation $assetRoot -Interactive:([bool]($form -and $form.Visible -and -not $Background))
     }
-    if(-not $WithoutMods -and $plan -and $plan.uniforms.Count -and [IO.File]::Exists((Join-Path $vanillaAssetRoot 'assets.json'))){
+    if(-not $WithoutMods -and $plan -and $plan.active.Count -and [IO.File]::Exists((Join-Path $vanillaAssetRoot 'assets.json'))){
         Sync-ChmodRosterActivation $rosterBaseline $rosterProfiles $rosterState $rosterRoots $plan $vanillaAssetRoot
     }
     $logRoot = Join-Path $repoRoot 'logs'
