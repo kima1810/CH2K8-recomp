@@ -70,7 +70,7 @@ start at the package root. See [nested collections](#nested-collections).
 | --- | --- |
 | `schema_version` | JSON integer `1`. |
 | `id` | Stable lowercase identifier matching `^[a-z0-9]+(?:[.-][a-z0-9]+)*$`, up to 512 characters in the manifest, with installed path limits also applying. |
-| `name`, `author` | 1–120 characters with no ASCII control characters. |
+| `name`, `author` | 1â€“120 characters with no ASCII control characters. |
 | `description` | Optional text up to 4,096 characters. |
 | `version` | Numeric `MAJOR.MINOR.PATCH`. Each component is zero or starts with a nonzero digit. |
 | `requires` | Exactly `xex_sha256`, `recomp` and `mod_api`. Use the pinned Xbox title revision below. |
@@ -158,7 +158,7 @@ types as identifiers, including for resources with no recovered name.
 | Format | `kind` | `record_type` | Required asset fields beyond the common fields |
 | --- | --- | ---: | --- |
 | Standalone texture | `dds.replace` | 1547079785 | None. Add `selection` only for Button Style. |
-| Named embedded texture | `dds.replace` | 1547079785 or 3798768477 | `texture_slot`, integer 0–4095. |
+| Named embedded texture | `dds.replace` | 1547079785 or 3798768477 | `texture_slot`, integer 0â€“4095. |
 | Cloth mesh positions | `cloth.positions` | 3798768477 | `component: 0`. |
 | Shorts simulation | `cloth.simulation` | 3776073491 | `component: 0`. |
 | Court floor | `court.scene` | 3798768477 | Two entries, `component: 0` and `component: 1`. |
@@ -225,17 +225,12 @@ component 1 and targets `scene_gpu.dat`. Legacy `block0.dat` and `block1.dat`
 paths are recognized when mapped to the owning components. Bind both original
 digests and stage both files together.
 
-For a one-image court tool, call
-`ch2k8_tools build-full-floor GAME s###/artwork.dds MODS` when provided by
-the installed version. The input is a 2048×1024 BC1/DXT1 DDS with 12 mip levels
-and the UGA artwork layout. It generates the two Xbox components and their
-versioned mod manifest. It maps the artwork to the verified stock UV layout,
-hides decorative draws and retains the stock lighting geometry. Use
-`audit-full-floors GAME` to populate the editor's court selector on builds
-with that command. Split and unrecognized courts require their own conversion.
-Older tools with `validate-court` may support only the pinned UGA layouts.
-Use the named DDS route for a repaint that keeps a compatible court's original
-geometry and markings.
+Studio owns one-image court authoring and mod-folder export. It must produce the
+paired CPU/GPU components against a supported source layout. Use the recomp's
+`validate-court SOURCE_CPU SOURCE_GPU EDITED_CPU EDITED_GPU` before staging.
+A successful validation does not imply arbitrary SCNE editing is supported.
+Use the named DDS route for a repaint that retains the original geometry and
+markings. This contract does not provide a standalone court builder.
 
 ## Native roster
 
@@ -255,10 +250,10 @@ derive isolated user-data profiles. The package has no arbitrary save-path field
 ## New uniform pairs
 
 Use content `assets`, capability `uniform.register`, and optional
-`uniforms` containing 2–64 bank objects. Each has exactly `name`,
+`uniforms` containing 2â€“64 bank objects. Each has exactly `name`,
 `template_hash` (uint32), `template_layout_sha256`, `folder` and `files`.
 The layout digest is for the matching stock template's `asset.json`.
-`folder` is `uniforms/<name>`. `files` lists 2–4,096
+`folder` is `uniforms/<name>`. `files` lists 2â€“4,096
 `{path, sha256}` objects whose paths are relative to the individual bank
 folder, including its source-bound `asset.json`, component files and DDS
 payloads required by the template. The runtime derives the active bank layout.
@@ -266,7 +261,7 @@ payloads required by the template. The runtime derives the active bank layout.
 Create a world/selection pair in the same package, for example `ux123.iff`
 and `selux123.iff`. Use the correct template for each half. The letters
 `h/a/x/y/z` mean Home, Away, and Alternates 1/2/3. Use canonical artwork IDs
-0–1023 padded to at least three digits. Artwork ID is separate from team and
+0â€“1023 padded to at least three digits. Artwork ID is separate from team and
 roster owner IDs. New Home/Away banks require a same-package native roster
 with a matching route assigned to a team. Alternate-only pairs can link at
 launch through unique existing native artwork ownership. Unresolved owners,

@@ -75,18 +75,10 @@ slot. Never guess these from the display name. Arbitrary DAT replacement, generi
 scene topology changes, animation, LAYT and audio do not have a general export
 capability. Viewing a resource in Studio does not imply a loader writer exists.
 
-For a full court, use **Build Court.cmd** or the installed native tool:
-
-```text
-ch2k8_tools build-full-floor GAME s###/artwork.dds MODS
-ch2k8_tools audit-full-floors GAME
-```
-
-Use the UGA artwork layout in a 2048 x 1024 BC1/DXT1 DDS with 12 mip levels.
-The builder preserves the supported stock lighting geometry while hiding the
-original decorative draws. Check the audit for supported layouts. Split or
-unrecognized courts require additional conversion. Ordinary DDS repainting keeps
-the original court geometry and markings.
+Court authoring belongs in Studio. Its export supplies the paired CPU/GPU
+components and manifest. The recomp validates and stages those components against
+the supported source layout. Ordinary DDS repainting retains original geometry
+and markings. No standalone court-building command is provided by this PR.
 
 Uniform letters `h/a/x/y/z` mean Home, Away and Alternates 1/2/3. Pair each world
 bank with its `sel` selection bank. Artwork ID differs from team/roster owner ID.

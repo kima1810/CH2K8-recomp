@@ -3,7 +3,6 @@
 #include "native_assets/prepared_state.h"
 #include "native_assets/mod_contracts.h"
 #include "native_assets/court_contract.h"
-#include "native_assets/full_floor_builder.h"
 #include "native_assets/uniform_contracts.h"
 constexpr const char *SupportedXex =
     "71e8983d1cc009e485696aad19b5fa4b4661761870e2c8972717b932c1e4be36";
@@ -182,12 +181,6 @@ int wmain(int argc, wchar_t **argv) {
     } else if (pos[0] == "validate-court") {
       require(pos.size()==5,"Usage: validate-court SOURCE_CPU SOURCE_GPU EDITED_CPU EDITED_GPU");
       result=validate_court_scene(path(pos[1]),path(pos[2]),path(pos[3]),path(pos[4]));
-    } else if (pos[0] == "build-full-floor") {
-      require(pos.size()==4,"Usage: build-full-floor GAME COURT_FOLDER/ARTWORK.dds MODS");
-      result=build_full_floor(path(pos[1]),path(pos[2]),path(pos[3]),SupportedXex);
-    } else if (pos[0] == "audit-full-floors") {
-      require(pos.size()==2,"Usage: audit-full-floors GAME");
-      result=audit_full_floors(path(pos[1]));
     } else if (pos[0] == "validate-cloth") {
       require(pos.size()==3,"Usage: validate-cloth ORIGINAL REPLACEMENT");
       result=validate_cloth_positions(path(pos[1]),path(pos[2]));

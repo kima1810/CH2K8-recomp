@@ -183,21 +183,6 @@ geometry, sampler and texture ID where available. LSU's center-court logo is
 `centerlogo_diffuse_a37a1e3d.dds`. The `_support/` folders retain data maps
 and cubemaps in their original encodings.
 
-### One-image full courts
-
-1. Save artwork laid out like the Georgia Full Floor template as a
-   2048×1024 BC1 (DXT1) DDS with all 12 mip levels.
-2. Put the DDS in a folder named for the target arena bank without its
-   extension. For example, use `s272/floor.dds` for Georgia Southern.
-3. Drag the DDS onto `Build Court.cmd`. The tool creates a versioned folder
-   under `mods`. Enable that version in the launcher's Mods screen.
-
-Use the same artwork layout for another court by changing the parent folder ID.
-The converter maps the image to the target floor's stock UVs and uses Georgia's
-draw-selection approach to hide stock court markings and retain the target's
-lighting geometry. Split floors and unknown shader or UV layouts report an
-error before a mod is created.
-
 To migrate a previous PNG layout, use
 `python tools/court_artwork.py restore-dds GAME_FOLDER --archive BACKUP_FOLDER`.
 Use a new backup folder outside the game installation. The migration applies
@@ -258,6 +243,20 @@ not in-game visuals. The user should test an unchanged-folder boot, gameplay,
 field edit. Check native upload log lines. The game was not launched during work.
 
 ## Baseline references
+
+### Default Xbox import layout
+
+Fresh imports from an Xbox ISO or extracted disc use the named layout
+automatically. The importer resolves bank names by Xbox filename CRC, including
+world and selection variants of alternate uniforms, shoes, and cloth. It
+resolves internal resources by record CRC, using names found in the shipped SCNE
+strings where available. Unresolved names retain their hashes.
+
+Court SCNEs keep their geometry and material labels on editable DDS files.
+The same artwork and `_support` classification applies to every court, with
+verified exceptions matched to their bank, scene, slot, and texture IDs.
+The native import command accepts `--legacy-layout` for tools that require the
+old numbered resource folders.
 
 ### Recovered Xbox asset names
 

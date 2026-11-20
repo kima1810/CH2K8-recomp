@@ -11,7 +11,7 @@ this integration. Existing main-branch work is linked as context.
 | Folder packages and editor interchange | [Modding guide](../MODDING.md), [export contract](../formats/mod-folder-editor.md), [schema](../formats/chmod.schema.json) |
 | Recursive collections and folder selection | `tools/chmod.ps1` Find-ChmodFolders/Install-ChmodCollection and `tools/chmod_ui.ps1`; per-package limits remain enforced |
 | Uniform registration and source-bound overrides | `tools/native_assets/uniform_contracts.h`, `tools/chmod.ps1`; world/selection pairing, layout digests and roster ownership checks |
-| Court component validation and authoring tools | `tools/native_assets/court_contract.h` and `full_floor_builder.h`; paired components retain supported lighting geometry |
+| Court component validation | `tools/native_assets/court_contract.h`; validates paired components exported by Studio against supported source layouts |
 | Launcher compatibility, recovery and profiles | [Loader audit](../findings/2026-11-12-modloader-audit.md) |
 | Named resources and texture ownership | [Loose assets](../formats/loose_assets.md), [paired components](../findings/2026-11-02-paired-components.md) |
 
