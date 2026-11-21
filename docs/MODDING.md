@@ -127,6 +127,9 @@ or native save. Do not write those edits back into vanilla assets.
 
 ## Presentation extensions
 
+For the shared DLL's source layout, hook registration, build, and verification
+steps, see [Extending the shared CHMOD DLL](EXTENDING_THE_DLL.md).
+
 The published Button Style hook combines a native choice provider with conditional
 PlayStation DDS payloads. Coverage includes menu/controller prompts and the
 supported on-court passing atlas. See [Button Style](../sdk/BUTTON_STYLE.md).
