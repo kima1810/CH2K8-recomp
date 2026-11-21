@@ -79,6 +79,10 @@ slot. Never guess these from the display name. Arbitrary DAT replacement, generi
 scene topology changes, animation, LAYT and audio do not have a general export
 capability. Viewing a resource in Studio does not imply a loader writer exists.
 
+Court authoring belongs in Studio. Its export supplies the paired CPU/GPU
+components and manifest. The recomp validates and stages those components against
+the supported source layout. Ordinary DDS repainting retains original geometry
+and markings. No standalone court-building command is provided by this PR.
 For a full court, use **Build Court.cmd** or the installed native tool:
 
 ```text
@@ -130,7 +134,8 @@ supported on-court passing atlas. See [Button Style](../sdk/BUTTON_STYLE.md).
 ESPN and USA Sports scorebugs use a separate opt-in [CHMOD ABI 2 preview DLL](../examples/scorebug_preview/README.md)
 and converted Xbox scenes in an overlay. A style change takes effect when the
 next match loads. The preview targets a matching executable and uses internal
-hooks. Live rendering and menu behavior still need gameplay verification.
+hooks outside the public scorebug capability set. Live rendering and menu behavior
+still need gameplay verification.
 See [conversion and live-element research](findings/2026-11-19-scorebug-elements.md)
 for tooling and native addresses.
 

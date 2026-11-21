@@ -87,8 +87,14 @@ def test_source_compatible_cloth_contract(tmp_path,mutation):
     assert (result.returncode==0)==(mutation=='position'),result.stderr
 
 
-def test_roster_profile_isolation_and_persistent_reuse(tmp_path):
+@pytest.mark.parametrize('display, filename', [
+    ('Roster', 'Roster.ROS'),
+    ('Custom Team', 'Custom Team.ROS'),
+    ('CON', 'Roster.ROS'),
+])
+def test_roster_profile_isolation_and_persistent_reuse(tmp_path, display, filename):
     data,head,_=synthetic_roster()
+    head[8:264] = display.encode('utf-16-be').ljust(256, b'\0')
     save=tmp_path/'Roster.ROS';save.write_bytes(data)
     header=tmp_path/'Roster.ROS.header';header.write_bytes(head)
     baseline=tmp_path/'baseline';profile=baseline/'B13EBABEBABEBABE/54540818'
@@ -98,15 +104,22 @@ def test_roster_profile_isolation_and_persistent_reuse(tmp_path):
 $r=[pscustomobject]@{mod='test.roster';version='1.0.0';file=$args[1];header=$args[2];sha256=$args[5];header_sha256=$args[6]}
 $p=[pscustomobject]@{active=@([pscustomobject]@{id='test.roster';version='1.0.0'});replacements=@();roster=$r}
 $first=New-ChmodRosterProfile $args[3] $args[4] $p
+$name=$args[7]
+$save=Join-Path $first "B13EBABEBABEBABE/54540818/00000001/$name/$name"
+if((Get-ModHash $save) -cne $args[5]){throw 'Staged roster differs from its seed'}
+[IO.File]::AppendAllText($save,'user edit')
 $again=New-ChmodRosterProfile $args[3] $args[4] $p
 if($first -ne $again){throw 'Profile selection was not stable'}
 $p.roster=$null
 if((New-ChmodRosterProfile $args[3] $args[4] $p) -ne $args[3]){throw 'Disable did not return baseline'}
 $first
-""",save,header,baseline,tmp_path/'profiles',digest(data),digest(head))
+""",save,header,baseline,tmp_path/'profiles',digest(data),digest(head),filename)
     isolated=__import__('pathlib').Path(result.stdout.strip())
     assert original.read_bytes()==b'user original' and legacy.read_bytes()==b'user legacy'
-    assert (isolated/'B13EBABEBABEBABE/54540818/00000001/Roster.ROS/Roster.ROS').read_bytes()==data
+    profile = isolated/'B13EBABEBABEBABE/54540818'
+    assert (profile/'00000001'/filename/filename).read_bytes() == data + b'user edit'
+    saved_header = (profile/'Headers/00000001'/(filename+'.header')).read_bytes()
+    assert saved_header[264:306].split(b'\0', 1)[0] == filename.encode('ascii')
     assert not (isolated/'B13EBABEBABEBABE/54540818/00000001/Legacy.LEG').exists()
     assert (isolated/'baseline-backup/00000001/Roster.ROS/Roster.ROS').read_bytes()==b'user original'
 

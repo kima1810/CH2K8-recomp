@@ -934,7 +934,8 @@ function New-ChmodRosterProfile([string]$Baseline,[string]$ProfileRoot,$Plan) {
             if($Plan.roster){
                 # Keep the Dummy HDD package name, inner file and aggregate header in sync.
                 $display=[Text.Encoding]::BigEndianUnicode.GetString($headerBytes,8,256).Split([char]0)[0]
-                if($display -cmatch '^[A-Za-z0-9][A-Za-z0-9 _.-]{0,35}$' -and $display -notmatch '[ .]$'){
+                if($display -cmatch '^[A-Za-z0-9][A-Za-z0-9 _.-]{0,35}$' -and $display -notmatch '[ .]$' -and
+                   $display -notmatch '^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\.|$)'){
                     $fileName=$display+'.ROS'
                     $filenameBytes=[Text.Encoding]::ASCII.GetBytes($fileName)
                     [Array]::Clear($headerBytes,264,42)
