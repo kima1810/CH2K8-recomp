@@ -1,8 +1,35 @@
 cmake_minimum_required(VERSION 3.25)
-project(scorebug_preview LANGUAGES CXX)
+project(scorebug_preview LANGUAGES C CXX)
 if(NOT WIN32)
     message(FATAL_ERROR "The preview provider requires the Windows runtime")
 endif()
-add_library(scorebug_preview SHARED scorebug_preview.cpp)
-target_compile_features(scorebug_preview PRIVATE cxx_std_20)
+set(SCOREBUG_EXECUTABLE "" CACHE FILEPATH "Exact pristine CH2K8 executable targeted by this DLL")
+set(SCOREBUG_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../port/generated/default"
+    CACHE PATH "Generated headers for the targeted ZMO-beta1 revision")
+if(NOT EXISTS "${SCOREBUG_EXECUTABLE}")
+    message(FATAL_ERROR "Provide the matching pristine ZMO-beta1 executable")
+endif()
+set(SCOREBUG_LINK_MAP "${SCOREBUG_EXECUTABLE}.map" CACHE FILEPATH "Link map for the target executable")
+if(NOT EXISTS "${SCOREBUG_LINK_MAP}")
+    message(FATAL_ERROR "Provide the link map for the pristine executable")
+endif()
+file(STRINGS "${SCOREBUG_LINK_MAP}" compiled_scorebug
+    REGEX "mod_scorebug_elements\\.cpp\\.obj|Ch2k8ScorebugRuntime")
+if(compiled_scorebug)
+    message(FATAL_ERROR "The target executable contains the old compiled-in scorebug")
+endif()
+file(SHA256 "${SCOREBUG_EXECUTABLE}" SCOREBUG_EXECUTABLE_SHA256)
+find_package(rexglue CONFIG REQUIRED)
+include(FetchContent)
+FetchContent_Declare(minhook
+    GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
+    GIT_TAG c3fcafdc10146beb5919319d0683e44e3c30d537)
+FetchContent_MakeAvailable(minhook)
+add_library(scorebug_preview SHARED scorebug_preview.cpp scorebug_elements.cpp)
+target_include_directories(scorebug_preview PRIVATE ../../sdk/include ../../port/third_party
+    "${SCOREBUG_GENERATED_DIR}")
+target_compile_features(scorebug_preview PRIVATE cxx_std_23)
+target_compile_definitions(scorebug_preview PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN
+    SCOREBUG_EXECUTABLE_SHA256="${SCOREBUG_EXECUTABLE_SHA256}")
+target_link_libraries(scorebug_preview PRIVATE rex::runtime minhook bcrypt)
 set_target_properties(scorebug_preview PROPERTIES OUTPUT_NAME "scorebug-preview")
