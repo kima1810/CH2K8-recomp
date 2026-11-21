@@ -1,5 +1,7 @@
 # Scorebug scene conversion and live elements
 
+This historical prototype used scorebug-specific code compiled into the executable. That code has been removed from the ZMO beta build. The [modding policy](../MODDING_POLICY.md) requires a DLL patch and an asset overlay for a supported scorebug mod.
+
 The ESPN and USA Sports preview uses converted PS3 scene geometry with native
 Xbox texture declarations and shader programs. A separate preview DLL selects
 the style through Options / Presentation. ESPN is the initial choice. The

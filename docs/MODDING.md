@@ -7,6 +7,8 @@ field and payload layout. [CHMOD API 1.3](formats/chmod-1.3.md), the
 provide the validation and extension contracts. CHMOD remains the internal API
 name. A mod can be distributed as an ordinary folder.
 
+All mod code and assets must follow the [modding policy](MODDING_POLICY.md).
+
 ## Install and organize
 
 Use **Install mod or collection** in Mods, or drag the folder into that window.
