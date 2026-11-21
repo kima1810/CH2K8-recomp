@@ -9,6 +9,7 @@ name. A mod can be distributed as an ordinary folder.
 
 The [modding policy and development plan](MODDING_POLICY.md) defines package
 distribution, the shared project DLL, authoring checks and release updates.
+See the [recomp backlog](MODDING_BACKLOG.md) for planned features and ownership.
 
 ## Install and organize
 

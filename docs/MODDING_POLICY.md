@@ -2,6 +2,8 @@
 
 Mods must work with an unmodified game executable and pristine vanilla assets.
 
+The [recomp backlog](MODDING_BACKLOG.md) defines the target scope for the shared DLL, Studio, and data packs, including gameplay and Legacy.
+
 - **Code mods ship as DLL patches.** Load the DLL through the modloader with native-code opt-in. Apply code patches at runtime in memory. Keep mod-specific code out of the executable and its source and build configuration. A mod install or launch must never overwrite or patch the executable on disk.
 - **Asset mods ship as overlays.** Package replacement assets for the modloader to resolve over the vanilla assets. Package new assets alongside them through the overlay. Keep generated files in the mod package or its own staging directory. A mod install or launch must never change files in the vanilla asset directory.
 - **Disabling a mod restores vanilla behavior.** Launching without the mod must omit its DLL and asset overlays. Installing, updating, or disabling a mod must require no restoration of vanilla files.
