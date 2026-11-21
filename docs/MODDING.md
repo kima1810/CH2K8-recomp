@@ -7,7 +7,8 @@ field and payload layout. [CHMOD API 1.3](formats/chmod-1.3.md), the
 provide the validation and extension contracts. CHMOD remains the internal API
 name. A mod can be distributed as an ordinary folder.
 
-All mod code and assets must follow the [modding policy](MODDING_POLICY.md).
+The [modding policy and development plan](MODDING_POLICY.md) defines package
+distribution, the shared project DLL, authoring checks and release updates.
 
 ## Install and organize
 
@@ -125,13 +126,12 @@ The published Button Style hook combines a native choice provider with condition
 PlayStation DDS payloads. Coverage includes menu/controller prompts and the
 supported on-court passing atlas. See [Button Style](../sdk/BUTTON_STYLE.md).
 
-ESPN/USA Sports scorebugs use a separate opt-in preview DLL and converted Xbox
-scenes. ESPN is the initial choice. A change takes effect on the next main match
-scene construction. This preview provider is separate from the public CHMOD ABI.
+ESPN and USA Sports scorebugs use a separate opt-in [CHMOD ABI 2 preview DLL](../examples/scorebug_preview/README.md)
+and converted Xbox scenes in an overlay. A style change takes effect when the
+next match loads. The preview targets a matching executable and uses internal
+hooks. Live rendering and menu behavior still need gameplay verification.
 See [conversion and live-element research](findings/2026-11-19-scorebug-elements.md)
-for tooling, native addresses and verification limits. Updated logo alpha,
-placement and live elements still need manual gameplay review. Live poll ranks
-remain unresolved. Do not package the preview as a generally supported hook API.
+for tooling and native addresses.
 
 Native mods currently target Windows x64. A DLL is executable code and is not
 portable to macOS by copying it. See the [Mac portability assessment](research/mac-portability.md).
