@@ -889,6 +889,7 @@ function New-ChmodRosterProfile([string]$Baseline,[string]$ProfileRoot,$Plan) {
     # A changed asset selection or version receives a fresh profile. Existing
     # Legacy saves in either baseline or older profiles are never migrated.
     $descriptor=[ordered]@{api='1.1.0';active=$Plan.active;roster=$(if($r){$r.sha256}else{'builtin-no-seed'});header=$(if($r){$r.header_sha256}else{'none'});assets=@($Plan.replacements|ForEach-Object{[ordered]@{target=$_.target;sha256=$_.sha256}})}
+    if($Plan.roster){$descriptor.roster_layout='named-dummy-hdd-v1'}
     if($Plan.uniforms.Count){$descriptor.api='1.2.0';$descriptor.uniforms=@($Plan.uniforms|ForEach-Object{[ordered]@{name=$_.name;files=$_.files}})}
     if($Plan.extensions.Count){$descriptor.api='1.2.0';$descriptor.extensions=$Plan.extensions}
     $bytes=[Text.Encoding]::UTF8.GetBytes(($descriptor|ConvertTo-Json -Depth 15 -Compress))
@@ -928,10 +929,22 @@ function New-ChmodRosterProfile([string]$Baseline,[string]$ProfileRoot,$Plan) {
             }
         }
         if($r){
-            $payload=Get-ModPath $stage ($profile+'/00000001/Roster.ROS/Roster.ROS')
-            $header=Get-ModPath $stage ($profile+'/Headers/00000001/Roster.ROS.header')
+            $fileName='Roster.ROS'
+            $headerBytes=[IO.File]::ReadAllBytes($r.header)
+            if($Plan.roster){
+                # Keep the Dummy HDD package name, inner file and aggregate header in sync.
+                $display=[Text.Encoding]::BigEndianUnicode.GetString($headerBytes,8,256).Split([char]0)[0]
+                if($display -cmatch '^[A-Za-z0-9][A-Za-z0-9 _.-]{0,35}$' -and $display -notmatch '[ .]$'){
+                    $fileName=$display+'.ROS'
+                    $filenameBytes=[Text.Encoding]::ASCII.GetBytes($fileName)
+                    [Array]::Clear($headerBytes,264,42)
+                    [Array]::Copy($filenameBytes,0,$headerBytes,264,$filenameBytes.Length)
+                }
+            }
+            $payload=Get-ModPath $stage ($profile+"/00000001/$fileName/$fileName") -SavePath
+            $header=Get-ModPath $stage ($profile+"/Headers/00000001/$fileName.header") -SavePath
             $null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($payload));$null=[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($header))
-            [IO.File]::Copy($r.file,$payload);[IO.File]::Copy($r.header,$header)
+            [IO.File]::Copy($r.file,$payload);[IO.File]::WriteAllBytes($header,$headerBytes)
         }
         Write-ModJson (Join-Path $stage 'chmod-profile.json') ([ordered]@{key=$key;roster_mod=$(if($r){$r.mod}else{'builtin'});roster_version=$(if($r){$r.version}else{'none'});selection=$descriptor;policy='isolated-no-legacy-migration'})
         [IO.Directory]::Move($stage,$destination)
@@ -1052,6 +1065,18 @@ function Get-ChmodRosterFiles([string]$Root) {
         }
     }
 }
+function Get-ChmodRosterSeedHash([string]$Root,[string]$ProfileRoot) {
+    $path=[IO.Path]::GetFullPath($Root).TrimEnd('\')
+    $profiles=[IO.Path]::GetFullPath($ProfileRoot).TrimEnd('\')
+    if([IO.Path]::GetDirectoryName($path) -ine $profiles){return}
+    $key=[IO.Path]::GetFileName($path)
+    if($key -cnotmatch '^[0-9a-f]{64}$'){return}
+    $receipt=Get-ModPath $path 'chmod-profile.json'
+    if(-not [IO.File]::Exists($receipt)){return}
+    $profile=Read-ModJson $receipt
+    if($profile.key -ceq $key -and $profile.roster_mod -and $profile.roster_mod -cne 'builtin' -and
+       $profile.selection.roster -cmatch '^[0-9a-f]{64}$'){return $profile.selection.roster}
+}
 function Restore-ChmodRosterActivation([string]$Baseline,[string]$ProfileRoot,[string]$State) {
     $journal=Get-ModPath $State 'active.json'
     if(-not [IO.File]::Exists($journal)){return}
@@ -1072,13 +1097,21 @@ function Restore-ChmodRosterActivation([string]$Baseline,[string]$ProfileRoot,[s
         $file=Get-ModPath $root $e.relative -SavePath; $header=Get-ModPath $root $e.header -SavePath
         $backup=Get-ModPath $State $e.backup -SavePath
         if((Get-ModHash $backup) -cne $e.before){throw 'Roster activation backup differs; original saves retained.'}
+        $seed=Get-ChmodRosterSeedHash $root $ProfileRoot
+        if($seed -and (-not [IO.File]::Exists($file) -or -not [IO.File]::Exists($header))){continue}
         $current=Get-ModHash $file
+        $headerHash=Get-ModHash $header
+        # A saved or renamed roster in an isolated mod profile is player-owned.
+        if($seed -and ($e.before -cne $seed -or
+            ($current -cne $e.before -and $current -cne $e.after) -or
+            $headerHash -cne $e.header_sha256)){continue}
         if($current -cne $e.before -and $current -cne $e.after){throw "Roster changed after automatic jersey activation: $file. Preserve this save and its activation backup; automatic switching stopped to protect your edits."}
-        if((Get-ModHash $header) -cne $e.header_sha256){throw 'Roster header changed after activation; switching stopped.'}
-        if($current -ceq $e.after -and $e.after -cne $e.before){$restore+=[pscustomobject]@{file=$file;backup=$backup}}
+        if($headerHash -cne $e.header_sha256){throw 'Roster header changed after activation; switching stopped.'}
+        if($current -ceq $e.after -and $e.after -cne $e.before){$restore+=[pscustomobject]@{root=$root;file=$file;backup=$backup}}
     }
     foreach($e in $restore){
-        $temp=$e.file+'.chmod-restore-'+[guid]::NewGuid().ToString('N')
+        # Stage on the save volume without appending to a deep Dummy HDD path.
+        $temp=Get-ModPath $e.root ('.chmod-restore-'+[guid]::NewGuid().ToString('N'))
         try{[IO.File]::Copy($e.backup,$temp);[IO.File]::Replace($temp,$e.file,[System.Management.Automation.Language.NullString]::Value)}finally{if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}}
     }
     # Keep backups and completed journal as an audit trail, never delete player saves.
@@ -1105,7 +1138,9 @@ function Sync-ChmodRosterActivation([string]$Baseline,[string]$ProfileRoot,[stri
     $entries=@();$staged=@();$total=0L
     # Only the native .ROS package shape. Never inspect or edit Legacy/other saves.
     foreach($root in @($Roots|Select-Object -Unique)){
+        $seed=Get-ChmodRosterSeedHash $root $ProfileRoot
         foreach($r in Get-ChmodRosterFiles $root){
+            if($seed -and (Get-ModHash $r.file) -cne $seed){continue}
             if($entries.Count -ge 256){throw 'Automatic roster activation exceeds 256 saves.'}
             $total+=(Get-Item -LiteralPath $r.file).Length
             if($total -gt 1GB){throw 'Automatic roster activation exceeds 1 GiB.'}
@@ -1121,13 +1156,16 @@ function Sync-ChmodRosterActivation([string]$Baseline,[string]$ProfileRoot,[stri
             $staged+=[pscustomobject]@{source=$output;target=$r.file;header=$r.header_file;entry=$entries[-1]}
         }
     }
-    if(-not $entries.Count){if($required.Count){throw 'Additional alternate folders need an existing native Dummy HDD roster; create/save one first.'};return}
+    if(-not $entries.Count){
+        if($required.Count -and -not $Plan.roster){throw 'Additional alternate folders need an existing native Dummy HDD roster; create/save one first.'}
+        return
+    }
     Write-ModJson (Get-ModPath $State 'active.json') ([ordered]@{version=1;entries=@($entries)})
     try{
         foreach($s in $staged){
             if((Get-ModHash $s.target) -cne $s.entry.before -or (Get-ModHash $s.header) -cne $s.entry.header_sha256 -or (Get-ModHash $s.source) -cne $s.entry.after){throw 'Roster changed before activation commit.'}
             if($s.entry.before -ceq $s.entry.after){continue}
-            $temp=$s.target+'.chmod-activate-'+[guid]::NewGuid().ToString('N')
+            $temp=Get-ModPath $s.entry.root ('.chmod-activate-'+[guid]::NewGuid().ToString('N'))
             try{[IO.File]::Copy($s.source,$temp);[IO.File]::Replace($temp,$s.target,[System.Management.Automation.Language.NullString]::Value)}finally{if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}}
         }
     }catch{
