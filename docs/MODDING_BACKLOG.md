@@ -19,7 +19,13 @@ This is the target scope for the recompiled game, Modding Studio, and the shared
 
 - [ ] **Player heads and faces** (4kim). Research asset identity and player assignment, add Studio export, and verify appearances in menus and gameplay.
 - [ ] **Roster and alternate assignment port.** Extend the tool to convert roster fields and alternate uniform assignments to native Xbox equivalents. Verify named players, team and uniform assignments, and edit/save/reload in the selected save profile.
-- [ ] **Updated shot clock and three-point distance.** Provide configurable rules through the shared DLL. Verify the shot-clock HUD and reset behavior against game state. Verify scoring logic and court artwork together when changing the three-point line.
+- [ ] **Updated shot clock and three-point distance.** Local DLL prototypes provide opt-in duration and distance overrides. The research is available for review. Verify clock resets, arc and corner scoring, and stat totals in game. Author matching court markings as asset overlays. [Shot clock](findings/2026-11-21-match-rule-clock.md) and [three-point distance](findings/2026-11-21-three-point-distance.md).
+
+### Player appearance milestones
+
+- Give two players who share a stock face two distinct textures while reusing the stock head mesh. Verify the assignments in roster screens and gameplay and after save/reload. Measure supported IDs and memory use before scaling to the whole roster.
+- Test a hairstyle with a new silhouette using a compatible mesh and material. Check assignment, clipping, and animation.
+- Start equipment work with a variant in an existing accessory slot. A new slot requires verified attachment, selection, and save behavior. Use Studio and overlays for asset payloads. Extend the shared DLL if stock appearance tables cannot resolve new IDs or expose new slots.
 
 ## Legacy
 
